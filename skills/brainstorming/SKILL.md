@@ -21,6 +21,8 @@ Every project goes through this process. A todo list, a single-function utility,
 
 You MUST create a task for each of these items and complete them in order:
 
+**Burndown skip detection (precondition).** Before starting any checklist step, check whether the user has expressed an intent to skip the burndown review for this run (e.g., "skip the burndown for this one"). Treat ambiguous intent ("maybe skip it") as not skipping (conservative default). If a clear skip intent is detected, set `burndown_skip = true`; otherwise leave it unset. (Same wording is used in writing-plans and subagent-driven-development to keep the contract consistent across all three parent skills.)
+
 1. **Explore project context** — check files, docs, recent commits
 2. **Offer visual companion** (if topic will involve visual questions) — this is its own message, not combined with a clarifying question. See the Visual Companion section below.
 3. **Ask clarifying questions** — one at a time, understand purpose/constraints/success criteria
@@ -28,8 +30,12 @@ You MUST create a task for each of these items and complete them in order:
 5. **Present design** — in sections scaled to their complexity, get user approval after each section
 6. **Write design doc** — save to `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md` and commit
 7. **Spec self-review** — quick inline check for placeholders, contradictions, ambiguity, scope (see below)
-8. **User reviews written spec** — ask user to review the spec file before proceeding
-9. **Transition to implementation** — invoke writing-plans skill to create implementation plan
+8. **Burndown review pass (NEW)** — if `burndown_skip` is true (re-check intent here; last-write wins), skip this step. Otherwise:
+   1. Write `<artifact_basename>.context.md` alongside the spec containing a best-effort summary of the user's original request, locked-in design decisions, and explicit non-goals (sections may be empty if not produced during the brainstorm).
+   2. Confirm the file was actually created before invoking burndown-reviews: `[ -f <artifact_basename>.context.md ]`. If the file is missing, write a minimal placeholder ("(no context captured)") rather than passing a non-existent path to burndown-reviews — a missing predecessor file would silently fail at reviewer dispatch.
+   3. Invoke the `burndown-reviews` skill with `stage=spec`, `artifact_path=<spec path>`, `predecessor=<context file path>`, `fixer_model=opus`. Wait for the loop to terminate. The loop's trajectory report goes to the user as part of its return.
+9. **User reviews written spec** — ask user to review the spec file before proceeding
+10. **Transition to implementation** — invoke writing-plans skill to create implementation plan
 
 ## Process Flow
 
@@ -44,6 +50,7 @@ digraph brainstorming {
     "User approves design?" [shape=diamond];
     "Write design doc" [shape=box];
     "Spec self-review\n(fix inline)" [shape=box];
+    "Burndown review pass" [shape=box];
     "User reviews spec?" [shape=diamond];
     "Invoke writing-plans skill" [shape=doublecircle];
 
@@ -57,7 +64,8 @@ digraph brainstorming {
     "User approves design?" -> "Present design sections" [label="no, revise"];
     "User approves design?" -> "Write design doc" [label="yes"];
     "Write design doc" -> "Spec self-review\n(fix inline)";
-    "Spec self-review\n(fix inline)" -> "User reviews spec?";
+    "Spec self-review\n(fix inline)" -> "Burndown review pass";
+    "Burndown review pass" -> "User reviews spec?";
     "User reviews spec?" -> "Write design doc" [label="changes requested"];
     "User reviews spec?" -> "Invoke writing-plans skill" [label="approved"];
 }

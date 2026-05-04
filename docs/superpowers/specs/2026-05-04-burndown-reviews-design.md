@@ -120,8 +120,10 @@ for round in 1..7:
   # E. end early on clean review.
   # An empty fix_list here IS genuine clean: prior-round deferred findings were
   # folded into all_findings in step A and have already been routed to fix_list,
-  # disagreements, or override by step B. If none survived, there is nothing to
-  # fix this round.
+  # disagreements, or override by step B. If none survived (every finding was
+  # accepted-and-merged-away, overridden, or escalated-and-user-skipped), there
+  # is nothing to fix this round. "Clean" here means "no work remains," not
+  # "reviewers found nothing" — user-skipped escalations count as cleared.
   if fix_list is empty:
     return "clean"
 
@@ -223,7 +225,7 @@ The user can extend by N rounds, accept the current state, or take over.
 ### Failure modes
 
 - **Reviewer subagent crashes or times out** → retry once. If still failing, abort the loop and surface to the user with a clear error.
-- **Fixer subagent crashes or times out** → same.
+- **Fixer subagent crashes or times out** → same. A fatal fixer abort in **any** round (1–7) immediately exits the loop with the error surfaced to the user; remaining rounds and the round-8 inventory pass are skipped.
 - **Fixer claims success but the artifact's content is unchanged** — verified via content hash (e.g., sha256) before and after dispatch. mtime is unreliable as a signal across filesystems and tools and is not used.
   - For prose artifacts (spec, plan): the hash is over the artifact file's full bytes.
   - For code artifacts (impl): the hash is over the **concatenated full contents of the files in `diff_paths`** (sorted by path), not over git-diff output. This catches reverts-to-base (which would produce an empty diff before and after) and avoids false positives from unrelated git operations.
@@ -299,6 +301,7 @@ Empty list if clean. No preamble, no summary, no commentary outside findings.
 - Path to the artifact.
 - The reconciled finding list (post-disagreement-resolution).
 - `stage`.
+- For `impl` stage only: `diff_paths` (the in-scope file list) and `diff_base` (commit SHA). The fixer must not modify files outside `diff_paths` except by creating new files (which it then reports — see Output below). `diff_base` is informational; the fixer uses it to understand what's in scope vs. what was already in the tree before the impl run.
 
 ### Role framing
 
@@ -312,7 +315,12 @@ Empty list if clean. No preamble, no summary, no commentary outside findings.
 
 ### Output
 
-The updated artifact, written in place. A brief summary of what was changed.
+A structured return value:
+
+- The updated artifact, written in place.
+- `deferred`: a list of finding IDs the fixer was unable to apply (intra-round conflicts; possibly empty). The orchestrator uses this list verbatim — IDs are preserved from the input fix list. See Failure modes § "Intra-round fix conflicts → deferred findings."
+- `created_paths` (impl stage): a list of any new file paths the fixer created outside the input `diff_paths` (possibly empty). The orchestrator extends its in-loop `diff_paths` copy with these and exempts the round from the unchanged-content failure check.
+- A brief summary of what was changed (human-readable; for the orchestrator's logs).
 
 ## Integration points in existing skills
 

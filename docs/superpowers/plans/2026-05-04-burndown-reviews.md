@@ -237,23 +237,24 @@ fixer_model_for_stage = opus   # all stages; overridable by user voice
 
 For each round 1 through 7:
 
-1. **A. Dispatch reviewers concurrently** — issue both Task calls in a single message with the `burndown-reviewer` agent, one with `model=opus`, one with `model=sonnet`. Pass `stage`, `artifact_path`, and the predecessor context. Both run in parallel.
-2. **B. Stamp finding IDs post-hoc** — namespace each reviewer's sequential IDs as `opus-r{round}-{n}` and `sonnet-r{round}-{n}`. Concatenate Opus output, Sonnet output, and the prior round's `deferred_findings` (which retain their original older IDs) into one `all_findings` list.
-3. **C. Judge each finding** — for each entry in `all_findings`, choose one of three verdicts:
+**Voice-override check (precondition for round 1, each disagreement-pause, and round-8 hard-escalate):** before dispatching reviewers in round 1 — and again before re-entering step E in any round, and during the round-8 hard-escalate exchange — listen for a fixer-model voice override (e.g., "use sonnet for fixer this round", "switch fixer to opus"). Last-write wins; update `fixer_model_for_stage` immediately. This is a per-pause-point check, not a per-round step. The plan's loop steps below are labeled to match the spec pseudocode's letters (A through F-bis), with the same operations and ordering.
+
+1. **(A) Dispatch reviewers concurrently** — issue both Task calls in a single message with the `burndown-reviewer` agent, one with `model="opus"`, one with `model="sonnet"` (these exact strings — the Task tool's `model` parameter overrides the agent's `model: inherit` frontmatter). Pass `stage`, `artifact_path`, and the predecessor context. Both run in parallel. The orchestrator stamps the returned findings post-hoc as `opus-r{round}-{n}` / `sonnet-r{round}-{n}` and concatenates them with the prior round's `deferred_findings` (which retain their older IDs) into `all_findings`.
+2. **(B) Judge each finding** — for each entry in `all_findings`, choose one of three verdicts:
    - **Accept** — finding is real and the suggested fix is sound. Add to `fix_list`.
-   - **Override** (confident) — you can verify the reviewer is wrong against the spec, the artifact, or the locked decisions. Drop silently; do not escalate. The user's time is the scarce resource you are protecting.
+   - **Override** (confident) — you can verify the reviewer is wrong against the spec, the artifact, or the locked decisions. Drop silently; do not escalate. The user's time is the scarce resource you are protecting. **An Override verdict on a deferred finding retires its ID** (per spec § "Override of a previously-deferred finding") — it does not appear in subsequent rounds.
    - **Escalate** (uncertain) — you suspect the reviewer is wrong but cannot fully verify, or the call genuinely depends on user judgment. Add to `disagreements`.
-4. **D. Merge near-duplicates** — collapse `fix_list` and `disagreements` **independently** (never across the two lists). Same merge rules apply to both:
+
+   **High-escalation-rate edge case (fires here, after judgment is complete):** if `len(disagreements)` is unusual (round 1: more than half of `len(all_findings)`; round 2+: significantly above the run's prior-round cadence), pause and offer the user three concrete options before continuing to step C: (a) skip remaining escalations this round (treat as confident overrides), (b) abort the loop so the user can edit the reviewer agent definition and restart, or (c) keep going as-is.
+3. **(C) Merge near-duplicates** — collapse `fix_list` and `disagreements` **independently** (never across the two lists). Same merge rules apply to both:
    - **Location match** — same full heading chain (prose) or overlapping line range (code; merged location = union, smallest start to largest end).
    - **Severity adjacency** — H↔M mergeable, M↔L mergeable, H↔L NOT mergeable (non-transitive). Merged severity = max of the two.
    - **ID survival** — when a deferred finding (carrying older ID) merges with a fresh finding, retain the **older** deferred ID for traceability. When two fresh findings of the same round merge, pick either.
    - **Fix-list match** uses `suggested_fix` similarity (same intervention?). **Disagreement-list match** uses `claim` similarity (the user is choosing what to do, so contradictory fix text is informative).
    - **Conflicting fixes at same location in fix_list:** the orchestrator must NEVER pass two contradictory `suggested_fix` strings to the fixer. Pick one and override or escalate the other; or, if the fixes are genuinely complementary, author a synthesized fix instruction in your own words and **log it in the round summary** so the rewrite is auditable. Prefer pick-one over rewriting.
-5. **E. Pause if any escalated disagreements remain** — surface them to the user in plain language, batched per round. Use the Disagreement UX from the spec (state finding, explain disagreement, offer recommendation, listen, restate). Block until the user finishes resolving every escalated item. Add user-resolved "keep" findings to `fix_list` (with the user's text replacing the reviewer's `suggested_fix` if they wrote one).
-6. **F. Early-clean check** — if `fix_list` is empty, return "clean" and emit the trajectory report. (User-skipped escalations and orchestrator overrides both count as cleared.)
-**Before round 1's reviewer dispatch (also at each disagreement-pause and during round-8 hard-escalate):** check for a fixer-model voice override. If the user has said something like "use sonnet for fixer this round" or "switch fixer to opus," update `fixer_model_for_stage` accordingly. Last-write wins.
-
-7. **G. Dispatch the fixer subagent** — single Task call with the `burndown-fixer` agent and `model=fixer_model_for_stage`. Pass `artifact_path`, the reconciled `fix_list`, and `stage` (plus `diff_paths` and `diff_base` for impl). Verify content changed via sha256 hash before/after, with these legitimacy rules:
+4. **(D) Pause if any escalated disagreements remain** — re-check the fixer-model voice override at this pause. Surface disagreements to the user in plain language, batched per round. Use the Disagreement UX from the spec (state finding, explain disagreement, offer recommendation, listen, restate). Block until the user finishes resolving every escalated item. Add user-resolved "keep" findings to `fix_list` (with the user's text replacing the reviewer's `suggested_fix` if they wrote one).
+5. **(E) Early-clean check** — if `fix_list` is empty, return "clean" and emit the trajectory report. (User-skipped escalations and orchestrator overrides both count as cleared.)
+6. **(F) Dispatch the fixer subagent** — single Task call with the `burndown-fixer` agent and `model=fixer_model_for_stage` (the current value, after any voice override). Pass `artifact_path`, the reconciled `fix_list`, and `stage` (plus `diff_paths` and `diff_base` for impl). Verify content changed via sha256 hash before/after, with these legitimacy rules:
    - **Hash domain:** for prose artifacts (spec, plan), hash the artifact file's full bytes. For impl stage, hash the concatenated full contents of files in `diff_paths` (sorted by path), treating any deleted file's contents as empty bytes — so deletions register as a real content change rather than a hash collision.
    - **Unchanged content + non-empty deferred list = legitimate.** The fixer determined it could apply none of the findings cleanly. Do NOT retry; advance to round N+1 with the deferred list carried forward.
    - **Unchanged content + empty deferred list + non-empty fix_list = failure.** Retry once. If still unchanged, set `abort_error` and break (fatal abort).
@@ -261,16 +262,18 @@ For each round 1 through 7:
    - **Reviewer/fixer crash retry:** any reviewer or fixer crash retries once within the same round (does not consume a round slot). Two consecutive crashes → fatal abort.
    - **Conflicting fixes never reach the fixer:** before this dispatch, the merge step (D) must have ensured that two contradictory `suggested_fix` strings at the same location were resolved (orchestrator picks one, escalates the other, or authors a logged rewrite). The fixer must never receive contradictory instructions for the same location.
    On fatal abort, set `abort_error = fixer_result.error` and break out of the loop — round 8 still runs (the user gets the abort error alongside a current-state finding list).
-8. **H. Update `deferred_findings`** from `fixer_result.deferred` (replaces, not appends — earlier-round deferrals were already re-judged in step C). Update in-loop `diff_paths` from `fixer_result.created_paths` (extend) and `fixer_result.deleted_paths` (remove). Compute the current artifact hash and deferred-ID set; if both equal the prior round's values and the deferred set is non-empty, break out of the loop early (non-progress short-circuit).
+7. **(F-bis) Update `deferred_findings` and check non-progress** — split into two atomic sub-steps:
+   - **(F-bis-1)** Update `deferred_findings = fixer_result.deferred` (replaces, not appends — earlier-round deferrals were already re-judged in step B). Update in-loop `diff_paths` from `fixer_result.created_paths` (extend) and `fixer_result.deleted_paths` (remove).
+   - **(F-bis-2)** Compute `current_artifact_hash = hash_of(artifact)` and `current_deferred_id_set = {f.id for f in deferred_findings}`. If `current_artifact_hash == prev_artifact_hash` AND `current_deferred_id_set == prev_deferred_id_set` AND `current_deferred_id_set` is non-empty → break out of the loop early (non-progress short-circuit; round 8 still runs). Otherwise, advance the trackers: `prev_artifact_hash = current_artifact_hash` and `prev_deferred_id_set = current_deferred_id_set`. Without this advance, the trackers stay frozen at their initial `None` values and the short-circuit can never fire correctly.
 
 After the loop (round 8 — inventory pass):
 
 - Dispatch both reviewers concurrently with the same inputs as in step A. Stamp findings with the **actual round number** the loop terminated at: typically `opus-r8-{n}` / `sonnet-r8-{n}` for the initial inventory; `opus-r{N}-{n}` / `sonnet-r{N}-{n}` for a post-extension inventory (e.g., `r18` after 10 extension rounds concluding at round 18). Do NOT hardcode `r8` for post-extension inventory passes.
-- Merge `final_opus + final_sonnet + deferred_findings` using the in-loop merge rules. Carried-deferred entries keep older IDs and get a `[deferred since r{N}]` annotation in the user-facing surface.
+- Merge `final_opus + final_sonnet + deferred_findings` using the in-loop merge rules. Carried-deferred entries keep older IDs. **The `[deferred since r{N}]` annotation is added at the residual-emission step (immediately before user surface), based on the merged entry's surviving ID** — if a deferred ID survived the merge, annotate; otherwise don't.
 - Termination logic — three cases:
   - `residual` empty AND `abort_error` is None → return "clean".
   - `abort_error` is not None (regardless of residual size) → surface the abort error AND the residual list together; mark as hard_escalate-with-abort.
-  - `residual` non-empty AND `abort_error` is None → surface the residual with: "7 rounds didn't converge. Here's what's still flagged. Accept as-is, run more rounds, or fix manually?"
+  - `residual` non-empty AND `abort_error` is None → surface the residual with: "**N rounds didn't converge**. Here's what's still flagged. Accept as-is, run more rounds, or fix manually?" — where `N` is the actual last round number (8 for the initial inventory, or the extension round number for post-extension inventories). Do NOT hardcode "7 rounds" — the message must match the run's actual round count.
 
 **High-escalation-rate edge case (within the loop):** if the orchestrator finds itself escalating an unusually large fraction of findings in a single round, that's a signal of miscalibration. For round 1, "unusual" = more than half of all findings escalated. For round 2+, "unusual" = significantly above the run's prior-round cadence. When triggered, the orchestrator pauses and offers the user three concrete options: (a) skip remaining escalations this round (treat as confident overrides), (b) abort the loop so the user can edit the reviewer agent definition and restart, or (c) keep going as-is.
 
@@ -296,8 +299,18 @@ Plus a Σ totals row. Round-8 inventory rows show Findings + severity breakdown 
 
 - [ ] **Step 3: Verify the file is well-formed**
 
-Run: `head -5 skills/burndown-reviews/SKILL.md && wc -l skills/burndown-reviews/SKILL.md`
-Expected: starts with `---`, has `name: burndown-reviews`, `description:`, then `---`. Roughly 100-130 lines total.
+```bash
+head -5 skills/burndown-reviews/SKILL.md
+grep -c "^## " skills/burndown-reviews/SKILL.md
+grep -E "^## (Overview|Inputs|Spec|Loop execution|Voice tunables|Trajectory report)" skills/burndown-reviews/SKILL.md
+```
+
+Expected:
+- `head -5` shows `---`, `name: burndown-reviews`, `description:`, then `---`.
+- `grep -c "^## "` returns at least 6 (Overview, Inputs, Spec, Loop execution, Voice tunables, Trajectory report).
+- The H2 enumeration shows all six sections present.
+
+(Line count is not a useful check — section completeness is.)
 
 - [ ] **Step 4: Commit**
 
@@ -341,7 +354,7 @@ Expected: see the section headings. Note the line numbers of "## Checklist" and 
 Use the Edit tool to add (just below the current "## Checklist" heading and intro paragraph):
 
 ```markdown
-**Burndown skip detection (always step 0):** Before starting any of the steps below, check whether the user has expressed an intent to skip the burndown review for this run (e.g., "skip the burndown for this one"). Treat ambiguous intent ("maybe skip it") as not skipping. If a clear skip intent is detected, set `burndown_skip = true`. If not detected, leave it unset.
+**Burndown skip detection (precondition).** Before starting any checklist step, check whether the user has expressed an intent to skip the burndown review for this run (e.g., "skip the burndown for this one"). Treat ambiguous intent ("maybe skip it") as not skipping (conservative default). If a clear skip intent is detected, set `burndown_skip = true`; otherwise leave it unset. (Same wording is used in writing-plans and subagent-driven-development to keep the contract consistent across all three parent skills.)
 ```
 
 - [ ] **Step 3: Renumber the checklist to insert the new step between current 7 and 8**
@@ -354,7 +367,10 @@ The new checklist items become:
 5. Present design
 6. Write design doc
 7. Spec self-review
-8. **Burndown review pass (NEW)** — if `burndown_skip` is true (re-check intent here; last-write wins), skip this step. Otherwise: write `<artifact_basename>.context.md` alongside the spec containing a best-effort summary of the user's original request, locked-in design decisions, and explicit non-goals (sections may be empty if not produced during the brainstorm). Then invoke the `burndown-reviews` skill with `stage=spec`, `artifact_path=<spec path>`, `predecessor=<context file path>`, `fixer_model=opus`. Wait for the loop to terminate. The loop's trajectory report goes to the user as part of its return.
+8. **Burndown review pass (NEW)** — if `burndown_skip` is true (re-check intent here; last-write wins), skip this step. Otherwise:
+   1. Write `<artifact_basename>.context.md` alongside the spec containing a best-effort summary of the user's original request, locked-in design decisions, and explicit non-goals (sections may be empty if not produced during the brainstorm).
+   2. Confirm the file was actually created before invoking burndown-reviews: `[ -f <artifact_basename>.context.md ]`. If the file is missing, write a minimal placeholder ("(no context captured)") rather than passing a non-existent path to burndown-reviews — a missing predecessor file would silently fail at reviewer dispatch.
+   3. Invoke the `burndown-reviews` skill with `stage=spec`, `artifact_path=<spec path>`, `predecessor=<context file path>`, `fixer_model=opus`. Wait for the loop to terminate. The loop's trajectory report goes to the user as part of its return.
 9. User reviews written spec
 10. Transition to implementation
 
@@ -396,8 +412,10 @@ If the diagram does not exist (e.g., the upstream skill changed and removed it),
 A bare `grep -c "^[0-9]\+\. "` would also count any other numbered lists in the file. Anchor the count to the Checklist section only:
 
 ```bash
-awk '/^## Checklist/,/^## [^C]/' skills/brainstorming/SKILL.md | grep -c "^[0-9]\+\. "
+awk '/^## Checklist/{flag=1; next} /^## /{flag=0} flag' skills/brainstorming/SKILL.md | grep -c "^[0-9]\+\. "
 ```
+
+(This pattern terminates at the next `## ` heading regardless of what character follows, so a hypothetical `## Configuration` heading won't accidentally extend the range.)
 
 Expected: `10` (10 numbered checklist items in the Checklist section). Also confirm the new step is present:
 
@@ -438,7 +456,7 @@ Expected output includes `## Self-Review` and `## Execution Handoff`. Record the
 The Overview section's last content is the `**Save plans to:**` line. Insert the skip-detection note as a new paragraph just before `## Scope Check` (so it lives at the very top of the actionable content, after Overview):
 
 ```markdown
-**Burndown skip detection (always first):** Before starting plan-writing, check whether the user has expressed an intent to skip the burndown review for this run (e.g., "skip the burndown for this one"). Treat ambiguous intent ("maybe skip it") as not skipping (conservative default). Set `burndown_skip = true` if a clear skip intent is detected; otherwise leave it unset.
+**Burndown skip detection (precondition).** Before starting plan-writing, check whether the user has expressed an intent to skip the burndown review for this run (e.g., "skip the burndown for this one"). Treat ambiguous intent ("maybe skip it") as not skipping (conservative default). If a clear skip intent is detected, set `burndown_skip = true`; otherwise leave it unset. (Same wording is used in brainstorming and subagent-driven-development to keep the contract consistent across all three parent skills.)
 ```
 
 - [ ] **Step 3: Insert the burndown invocation between Self-Review and Execution Handoff**
@@ -511,8 +529,8 @@ Use Edit to insert this section:
 
 Two things must happen before any Task call is issued (i.e., before "The Process" begins):
 
-1. **Burndown skip detection.** Check whether the user has expressed an intent to skip the burndown review for this run (e.g., "skip the burndown for this one"). Treat ambiguous intent ("maybe skip it") as not skipping (conservative default, no silent guessing). If a clear skip intent is detected, set `burndown_skip = true`; otherwise leave it unset.
-2. **Capture `diff_base`.** Verify the working tree is clean (`git status --porcelain` returns empty). If it is not clean:
+1. **Burndown skip detection (precondition).** Check whether the user has expressed an intent to skip the burndown review for this run (e.g., "skip the burndown for this one"). Treat ambiguous intent ("maybe skip it") as not skipping (conservative default). If a clear skip intent is detected, set `burndown_skip = true`; otherwise leave it unset. (Same wording is used in brainstorming and writing-plans to keep the contract consistent across all three parent skills.)
+2. **Capture `diff_base` (must occur before any Task tool call is issued — including parallel-dispatch messages).** Verify the working tree is clean (`git status --porcelain` returns empty). If it is not clean:
    - Surface the issue to the user with a brief summary of what's uncommitted (`git status --short`) and prompt: "Working tree is not clean. Commit or stash before continuing? (commit / stash / abort)"
    - If the user chooses commit or stash, wait for them to do so and re-check.
    - If the user chooses abort (or declines both options), **stop SDD execution by surfacing the precondition failure to the user and exiting the skill without dispatching any tasks**. Do not silently proceed.
@@ -530,11 +548,11 @@ After all per-task implementer/reviewer loops complete and tests pass, and befor
 
 If `burndown_skip` is true (re-check intent here; last-write wins): skip this section.
 
-Otherwise: collect the list of files touched during this SDD run via:
+Otherwise: collect the list of files touched during this SDD run via `git diff --name-only $diff_base HEAD`. Treat the output as a list of paths (one per line; convert to a structured list before passing to burndown-reviews — the orchestrator should not pass a newline-delimited blob).
 
-`diff_paths=$(git diff --name-only $diff_base HEAD)`
+**If `diff_paths` is empty** (no files changed since `diff_base`): the impl run produced no work. Skip the burndown-reviews invocation entirely and proceed directly to `finishing-a-development-branch` with a brief note to the user that nothing was changed.
 
-Then invoke the `burndown-reviews` skill with `stage=impl`, `artifact_path=<repo root>`, `predecessor={ plan_path, diff_base, diff_paths }`, `fixer_model=opus`. Wait for the loop to terminate. The trajectory report is shown to the user as part of its return.
+Otherwise invoke the `burndown-reviews` skill with `stage=impl`, `artifact_path=<repo root>`, `predecessor={ plan_path, diff_base, diff_paths }`, `fixer_model=opus`. Wait for the loop to terminate. The trajectory report is shown to the user as part of its return.
 ```
 
 - [ ] **Step 4: Verify the file is well-formed**
@@ -568,15 +586,28 @@ The codebase already has a skill-triggering harness at `tests/skill-triggering/r
 
 The test verifies that `burndown-reviews` is triggered when a parent skill (brainstorming) reaches its checklist's burndown step. Because the harness only runs the prompt for `MAX_TURNS` (default 3), and brainstorming starts by asking clarifying questions before the burndown step, the prompt must give Claude enough context to skip ahead to a phase where burndown-reviews would be invoked. We do that by phrasing the prompt as a request that *resumes* a brainstorm at the spec-self-review checkpoint.
 
-- [ ] **Step 1: Create the prompt fixture**
+- [ ] **Step 1: Create the prompt fixture and a stub spec for it to reference**
 
 Create `tests/skill-triggering/prompts/burndown-reviews.txt`:
 
 ```
-I've just finished brainstorming a tiny feature with you and the spec is at /tmp/example-spec.md. The brainstorming checklist's spec-self-review step is done. What's the very next step in the brainstorming checklist, and what skill does it invoke?
+I've finished brainstorming a tiny feature with you. The spec is at /tmp/burndown-test-spec.md and I've already done the inline spec-self-review. Continue to the next checklist step.
 ```
 
-This phrasing forces Claude to consult the brainstorming skill's checklist, identify the burndown step, and (per skill conventions) actually invoke `burndown-reviews` as the next step.
+The phrasing requests *action* on the next step (not a description of it), which nudges Claude to actually invoke the next skill rather than just announce it.
+
+Because the prompt references `/tmp/burndown-test-spec.md`, the test harness must create that stub file before invoking. Add a setup step that runs before the harness call (in a wrapper script or as a manual step in `run-all.sh`):
+
+```bash
+cat > /tmp/burndown-test-spec.md <<'EOF'
+# Test Spec for Burndown-Reviews Triggering
+
+## Motivation
+A minimal stub spec for the skill-triggering test fixture.
+EOF
+```
+
+(Document this setup in the prompt file's first comment line if the harness doesn't support pre-test setup hooks.)
 
 - [ ] **Step 2: Add `burndown-reviews` to the SKILLS array in run-all.sh**
 
@@ -594,7 +625,7 @@ Run: `tests/skill-triggering/run-test.sh burndown-reviews tests/skill-triggering
 
 Expected: the harness prints `✅ PASS: Skill 'burndown-reviews' was triggered`.
 
-If FAIL: the brainstorming integration in Task 4 may not be wired correctly, or the prompt phrasing didn't successfully push Claude past the early-conversation phase. Adjust the prompt or revisit Task 4 before proceeding.
+If FAIL: diagnose whether the brainstorming integration (Task 4) is missing or the prompt didn't push Claude past the clarifying-questions phase. Fix the issue in the relevant file (the brainstorming SKILL.md, or this prompt fixture), stage the change, and create a follow-up commit before re-running the test. Do not amend an already-pushed Task 4 commit unless the user explicitly asks.
 
 - [ ] **Step 4: Run the full skill-triggering suite to verify nothing else regressed**
 
@@ -631,12 +662,14 @@ Build a thing that does stuff for users.
 
 ## Architecture
 
-The system uses a database. The cache layer reads from the database. The database also reads from the cache. (Two-way data flow — known issue, see below.)
+The cache layer reads from the database. The cache layer never reads from the database. The API server reads from both the cache and the database depending on which it feels like. There is also a worker. The worker also handles requests, identically to the API server, but for different requests, which are not specified.
 
 ## Components
 
 - **API server** — handles requests
 - **Worker** — handles requests
+- **Database** — stores data
+- **Cache** — stores data
 
 ## Data flow
 
@@ -651,6 +684,8 @@ Requests flow from the API server to the database to the cache to the worker, th
 
 TBD
 ```
+
+The fixture is deliberately egregious to ensure a competent reviewer cannot miss the contradictions ("reads from" + "never reads from" at the same location), the unspecified worker semantics, and the duplicated component responsibilities. No "known issue" disclaimers — every flaw is unhedged.
 
 The fixture has multiple obvious flaws: vague motivation, contradictory architecture (two-way DB↔cache flow), duplicated component responsibilities, undefined data flow direction, untestable success criteria, and an unresolved TBD. A correct burndown run should converge before round 7 (return "clean") OR hit round 8 with a meaningfully smaller residual than the round-1 finding count. The exact round count varies per run because reviewers are stateless LLMs.
 
@@ -709,12 +744,12 @@ Fixtures live under `tests/burndown-reviews/fixtures/`.
 4. Prompt: `Run the burndown-reviews skill on /tmp/flawed.md, with stage=spec, predecessor=/tmp/flawed.context.md, fixer_model=opus.`
 
 Expected behavior:
-- Round 1 finds H or M findings (vague motivation, architectural contradiction, duplicated components, etc.).
-- Subsequent rounds converge: finding count decreases each round.
-- Loop returns "clean" before round 7, OR hits round 8 inventory with a non-empty residual.
-- Final trajectory report is emitted with at least one round showing >0 findings.
+- Round 1 finds H or M findings (architectural contradiction, vague motivation, duplicated components, etc.).
+- Subsequent rounds: finding count decreases.
+- Loop returns "clean" before round 7, OR hits round 8 inventory with **fewer than half the round-1 finding count** in the residual.
+- Final trajectory report is emitted with at least one round showing >0 findings, the H/M/L/nit columns populated, and a non-empty Σ totals row.
 
-If the loop fails to converge (round 8 hard escalate with most original issues still flagged) or the trajectory report is missing, that's a regression.
+If the loop fails to converge (round 8 residual ≥ half of round 1's finding count) or the trajectory report is missing, that's a regression.
 
 ## Procedure 2: Clean fixture
 
@@ -774,7 +809,7 @@ cat package.json
 node -e "console.log(require('./package.json').version)"
 ```
 
-Expected: prints `5.0.7+btc.1`. If `node` rejects the version string or normalizes it (some npm versions historically had quirks with build metadata), surface the issue here rather than at install time. If the build-metadata form is rejected, fall back to `5.0.8-btc.1` (next-patch + pre-release suffix; sorts above `5.0.7`) and update Task 10's RELEASE-NOTES entry to match.
+Expected: prints `5.0.7+btc.1`. If `node` rejects the version string or normalizes it (some npm versions historically had quirks with build metadata), **stop and surface the issue to the user** — do not silently fall back to a different scheme, because pre-release suffixes like `5.0.8-btc.1` have different semver semantics (they sort below `5.0.8` but above `5.0.7`, which only happens to look right for now and would invert if upstream releases `5.0.8`). The user can decide whether to switch schemes or pin a tooling version.
 
 - [ ] **Step 4: Commit**
 
@@ -855,6 +890,8 @@ git -C ~/Projects/src/claude-plugins init
 
 - [ ] **Step 2: Write a minimal README**
 
+**NOTE on fences:** the README below contains nested triple-backtick code blocks (the `text` install snippets). When passing this content to the Write tool, use a 4-backtick outer fence so the inner 3-backtick fences don't terminate the outer block prematurely.
+
 Create `~/Projects/src/claude-plugins/README.md`:
 
 ```markdown
@@ -912,17 +949,21 @@ git -C ~/Projects/src/claude-plugins commit -m "Initial: btc-plugins marketplace
 
 ### Task 13: Push the marketplace repo to GitHub
 
-- [ ] **Step 1: Create the remote (public repo)**
+- [ ] **Step 1: Create the remote and push (single command)**
+
+`gh repo create` with `--source` + `--push` creates the remote, adds it as `origin`, and pushes the existing branch in one call:
 
 ```bash
-gh repo create btc/claude-plugins --public --source=$HOME/Projects/src/claude-plugins --remote=origin --description="btc's personal plugins for Claude Code"
+gh repo create btc/claude-plugins --public --source=$HOME/Projects/src/claude-plugins --remote=origin --push --description="btc's personal plugins for Claude Code"
 ```
 
-- [ ] **Step 2: Push**
+If your `gh` version doesn't support `--push` on `repo create`, drop the flag and run a separate push afterwards:
 
 ```bash
 git -C ~/Projects/src/claude-plugins push -u origin main
 ```
+
+(Verify with `gh --version`; `--push` was added in `gh` 2.36 and later.)
 
 - [ ] **Step 3: Verify**
 
@@ -934,7 +975,8 @@ Expected: repo exists, public, contains README and `.claude-plugin/marketplace.j
 - [ ] **Step 1: Add the marketplace in Claude Code**
 
 In a Claude Code session: `/plugin marketplace add btc/claude-plugins`
-Expected: marketplace added; `/plugin` lists `superpowers` from `btc-plugins`.
+
+Note the name mapping: the GitHub repo is `btc/claude-plugins`, but the marketplace's internal name (declared in `marketplace.json`'s `"name"` field) is `btc-plugins` — that's the name `/plugin install superpowers@btc-plugins` references in Step 2. Verify by running `/plugin marketplace list` after adding; the entry should appear with marketplace name `btc-plugins`. If it appears as `claude-plugins` instead, Claude Code is using the repo basename rather than the JSON `name` field — in that case, either rename the marketplace.json `"name"` to `claude-plugins` to match, or rename the repo. Confirm before proceeding to Step 2.
 
 - [ ] **Step 2: Uninstall upstream (conditional) and install fork**
 
@@ -983,7 +1025,7 @@ After all tasks are complete, run a final pass:
 - Voice tunables (run more rounds, fixer override) ✓ (Task 3 includes both)
 - Trajectory report ✓ (Task 3 includes the table format)
 - Round-8 inventory pass with carried-deferred labeling ✓ (Task 3)
-- Failure modes (retries, fatal abort, deferred findings, new files, deletions) ✓ (Task 3 references the spec)
+- Failure modes (retries, fatal abort, deferred findings, new files, deletions) ✓ loop logic in Task 3 inlines the state machine; **test coverage partial** — see coverage matrix below (reviewer/fixer crash, deferred-override, ID-survival merge, non-progress short-circuit, and fixer-abort-with-round-8 are all deferred to follow-up)
 - Tests ✓ (Tasks 7, 8)
 - Versioning + release notes ✓ (Tasks 9, 10)
 - Marketplace repo ✓ (Tasks 12, 13)
@@ -1015,7 +1057,7 @@ After all tasks are complete, run a final pass:
 
 Cases marked "Out of scope" are deferred because they require either (a) a mock-subagent framework that does not exist in this codebase, or (b) deliberately-broken fixtures that are not load-bearing for first-cut deployment. Add coverage in a follow-up if the loop logic regresses in ways the manual procedures miss.
 
-**RELEASE-NOTES vs CHANGELOG:** the spec's File Layout section references `CHANGELOG.md`, but the actual upstream repo has `RELEASE-NOTES.md` (no `CHANGELOG.md`). Task 10 of this plan correctly targets `RELEASE-NOTES.md`. Anyone cross-referencing the spec's file layout should ignore the `CHANGELOG.md` mention — it's a stale spec artifact that should be updated in a follow-up commit. (Optional: append a one-line correction to the spec File Layout section: "(actual file: `RELEASE-NOTES.md`)".)
+**RELEASE-NOTES vs CHANGELOG:** the spec's File Layout section references `CHANGELOG.md`, but the actual upstream repo has `RELEASE-NOTES.md` (no `CHANGELOG.md`). Task 10 of this plan correctly targets `RELEASE-NOTES.md`. Anyone cross-referencing the spec's file layout should ignore the `CHANGELOG.md` mention — it's a stale spec artifact. **Action:** as part of Task 10, also append `(actual file: RELEASE-NOTES.md)` to the spec's File Layout section so the spec stops misleading future readers. This is committed work, not optional.
 
 **No-placeholder check:** every step contains either an exact code block, an exact command, or a concrete instruction. No "TBD" or "fill in later".
 

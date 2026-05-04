@@ -37,6 +37,18 @@ digraph when_to_use {
 - Two-stage review after each task: spec compliance first, then code quality
 - Faster iteration (no human-in-loop between tasks)
 
+## Pre-flight
+
+Two things must happen before any Task call is issued (i.e., before "The Process" begins):
+
+1. **Burndown skip detection (precondition).** Check whether the user has expressed an intent to skip the burndown review for this run (e.g., "skip the burndown for this one"). Treat ambiguous intent ("maybe skip it") as not skipping (conservative default). If a clear skip intent is detected, set `burndown_skip = true`; otherwise leave it unset. (Same wording is used in brainstorming and writing-plans to keep the contract consistent across all three parent skills.)
+2. **Capture `diff_base` (must occur before any Task tool call is issued — including parallel-dispatch messages).** Verify the working tree is clean (`git status --porcelain` returns empty). If it is not clean:
+   - Surface the issue to the user with a brief summary of what's uncommitted (`git status --short`) and prompt: "Working tree is not clean. Commit or stash before continuing? (commit / stash / abort)"
+   - If the user chooses commit or stash, wait for them to do so and re-check.
+   - If the user chooses abort (or declines both options), **stop SDD execution by surfacing the precondition failure to the user and exiting the skill without dispatching any tasks**. Do not silently proceed.
+
+   Once the tree is clean, record the current `HEAD` SHA: `diff_base = $(git rev-parse HEAD)`. This SHA is passed verbatim to burndown-reviews later — by the time burndown runs, the tree will have advanced, but `diff_base` stays anchored to the pre-impl state.
+
 ## The Process
 
 ```dot
@@ -61,6 +73,7 @@ digraph process {
     "Read plan, extract all tasks with full text, note context, create TodoWrite" [shape=box];
     "More tasks remain?" [shape=diamond];
     "Dispatch final code reviewer subagent for entire implementation" [shape=box];
+    "Burndown review pass" [shape=box];
     "Use superpowers:finishing-a-development-branch" [shape=box style=filled fillcolor=lightgreen];
 
     "Read plan, extract all tasks with full text, note context, create TodoWrite" -> "Dispatch implementer subagent (./implementer-prompt.md)";
@@ -80,7 +93,8 @@ digraph process {
     "Mark task complete in TodoWrite" -> "More tasks remain?";
     "More tasks remain?" -> "Dispatch implementer subagent (./implementer-prompt.md)" [label="yes"];
     "More tasks remain?" -> "Dispatch final code reviewer subagent for entire implementation" [label="no"];
-    "Dispatch final code reviewer subagent for entire implementation" -> "Use superpowers:finishing-a-development-branch";
+    "Dispatch final code reviewer subagent for entire implementation" -> "Burndown review pass";
+    "Burndown review pass" -> "Use superpowers:finishing-a-development-branch";
 }
 ```
 
@@ -261,6 +275,18 @@ Done!
 **If subagent fails task:**
 - Dispatch fix subagent with specific instructions
 - Don't try to fix manually (context pollution)
+
+## Burndown Review Pass
+
+After all per-task implementer/reviewer loops complete and tests pass, and before invoking `finishing-a-development-branch`:
+
+If `burndown_skip` is true (re-check intent here; last-write wins): skip this section.
+
+Otherwise: collect the list of files touched during this SDD run via `git diff --name-only $diff_base HEAD`. Treat the output as a list of paths (one per line; convert to a structured list before passing to burndown-reviews — the orchestrator should not pass a newline-delimited blob).
+
+**If `diff_paths` is empty** (no files changed since `diff_base`): the impl run produced no work. Skip the burndown-reviews invocation entirely and proceed directly to `finishing-a-development-branch` with a brief note to the user that nothing was changed.
+
+Otherwise invoke the `burndown-reviews` skill with `stage=impl`, `artifact_path=<repo root>`, `predecessor={ plan_path, diff_base, diff_paths }`, `fixer_model=opus`. Wait for the loop to terminate. The trajectory report is shown to the user as part of its return.
 
 ## Integration
 

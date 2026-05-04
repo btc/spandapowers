@@ -117,15 +117,20 @@ for round in 1..7:
                                                 # (with optional user-authored fix text
                                                 # overriding the reviewer's suggested_fix)
 
-  # E. end early on clean review
+  # E. end early on clean review.
+  # An empty fix_list here IS genuine clean: prior-round deferred findings were
+  # folded into all_findings in step A and have already been routed to fix_list,
+  # disagreements, or override by step B. If none survived, there is nothing to
+  # fix this round.
   if fix_list is empty:
     return "clean"
 
-  # F. dispatch fixer; fixer returns deferred_findings (empty on a clean apply,
-  # non-empty if intra-round conflicts forced it to skip some). The assignment
-  # REPLACES the prior round's deferred list — anything from earlier rounds was
-  # already re-judged this round (it joined all_findings in step A) and has been
-  # routed to fix_list, disagreements, or override by step B.
+  # F. dispatch fixer. dispatch_fixer encapsulates the full Failure-modes state
+  # machine: pre/post content-hash check, single retry on unchanged-with-empty-
+  # deferred failure, the new-files report, and the fatal_abort path. It returns
+  # either {deferred: [...]} (possibly empty) on success or signals fatal_abort.
+  # The assignment REPLACES the prior round's deferred list — anything from
+  # earlier rounds was already re-judged in step B above.
   fixer_result = dispatch_fixer(model=fixer_model_for_stage, artifact, fix_list)
   if fixer_result is fatal_abort:
     surface_error_and_exit()   # no round 8, no return value
@@ -140,7 +145,11 @@ final_opus, final_sonnet = parallel(
   reviewer(model=opus,   artifact, predecessor, stage),
   reviewer(model=sonnet, artifact, predecessor, stage),
 )
-residual = merge_duplicates(final_opus + final_sonnet)   # same merge rules as in-loop
+# Any non-empty deferred_findings carried in from round 7 are appended to the
+# residual so the user sees them — they describe issues the fixer couldn't
+# resolve and which may not be visible in the artifact text the round-8
+# reviewers see.
+residual = merge_duplicates(final_opus + final_sonnet + deferred_findings)
 if residual is empty:
   return "clean"   # round 7's fixer happened to land it
 return ("hard_escalate", residual)
@@ -150,7 +159,7 @@ return ("hard_escalate", residual)
 
 **Statelessness:** reviewers and fixers are fresh subagents each round. They see the current artifact, not prior rounds. Rationale: an effective fix removes the issue from the artifact, so a stateless reviewer next round won't re-flag it. An ineffective fix leaves the issue in place, so it gets re-flagged — that recurrence is itself a useful "convergence failing" signal.
 
-**Caveat to statelessness — re-fixing dropped findings.** If both reviewers flag the same finding round after round and the user once told the orchestrator "skip it," the orchestrator does not remember that decision across rounds. Next round, the orchestrator reads the same finding fresh, judges it, and (if it agrees with the reviewer) applies the fix — undoing the user's prior intent. The user's only safeguard is to say "skip" again when it re-surfaces. Two reasons we accept this: (i) reviewers are stateless and the prompt stays minimal; (ii) most real-world fixes change the artifact such that the reviewer no longer re-flags it. If a finding genuinely cannot be removed, the round-7 hard escalate ultimately exposes it.
+**Caveat to statelessness — re-fixing dropped findings.** Neither user-skipped findings nor confidently-overridden findings are remembered across rounds. If reviewers re-flag the same underlying issue in a later round (under a fresh ID), the orchestrator judges it fresh and may accept it — undoing a prior round's user-skip or confident override. The user's safeguard against re-application of skipped findings is to say "skip" again when it re-surfaces; the orchestrator's safeguard against re-applying its own prior overrides is to apply the same judgment again (the same arguments that justified the override last round still apply this round). Two reasons we accept this design: (i) reviewers are stateless and the prompt stays minimal; (ii) most real-world fixes change the artifact such that the reviewer no longer re-flags it. If a finding genuinely cannot be removed, the round-7 hard escalate ultimately exposes it.
 
 **All findings fixed each round.** The fix list per round = orchestrator-accepted findings + user-resolved disagreements that the user wants kept. Nothing is deferred to a later round.
 
@@ -172,6 +181,7 @@ After judgment, the orchestrator merges near-duplicates. The same merge rules ap
 - **Disagreement list (escalated findings):** two findings at the same `location` whose `claim` paragraphs describe the same underlying issue collapse to one entry. Their `suggested_fix` paragraphs are presented to the user as alternatives — the user is the one choosing what to do, so contradictory fix text is informative rather than a problem.
 - **Severity adjacency** (applies to both lists): **H↔M** are mergeable; **M↔L** are mergeable; **H↔L** are not (treat as separate entries). Non-transitive — M does not bridge H and L. Merged severity = max of the two.
 - **Overlapping line ranges** (impl stage): when two code-stage findings have overlapping line ranges at the same path, the merged location is the **union** (smallest start, largest end).
+- **ID survival on merge:** when a deferred finding (carrying an older round's ID, e.g., `opus-r2-3`) merges with a fresh finding (e.g., `sonnet-r3-1`), the merged entry retains the **older deferred ID** to preserve the traceability chain. When two fresh findings of the same round merge, the orchestrator picks either ID (no specific rule).
 - Conflicting fixes at the same location in the **fix list** (one finding says "lock decision X", another says "defer decision X") cannot be merged into a single accepted entry. The orchestrator must pick one — accept one and override or escalate the other, or accept the spirit of both and rewrite the merged fix instruction in its own words to resolve the conflict before passing to the fixer. Two contradictory `suggested_fix` strings must never reach the fixer at the same location.
 
 The orchestrator makes the "real issue?" / "fix sound?" / "same intervention?" judgments in prose. There is no string-similarity threshold or other mechanical rule; this is a reading-comprehension task and Claude is the right tool for it.
@@ -202,7 +212,7 @@ No fixed verdict vocabulary. The orchestrator interprets natural-language respon
 
 ### Round-7 hard escalate
 
-Rounds 1 through 7 are full review-judge-fix cycles. After round 7's fixer dispatch exits without a fatal abort (success, partial-with-deferrals, or unchanged-content-with-deferrals all qualify), the orchestrator runs **round 8 as a reviewer-only inventory pass** — dispatch both reviewers concurrently, do not judge, do not fix. The orchestrator then runs the same merge rules used inside the loop on the combined `final_opus + final_sonnet` set so the user sees one entry per distinct issue, not two near-identical entries from each reviewer. (A round-7 fixer that hits the abort path per the failure-mode rules — e.g., crashes twice or produces an unfixable empty-diff failure — skips round 8 and surfaces the abort error directly to the user.) The deduped residual finding list goes straight to the user:
+Rounds 1 through 7 are full review-judge-fix cycles. After round 7's fixer dispatch exits without a fatal abort (success, partial-with-deferrals, or unchanged-content-with-deferrals all qualify), the orchestrator runs **round 8 as a reviewer-only inventory pass** — dispatch both reviewers concurrently, do not judge, do not fix. The orchestrator then merges `final_opus + final_sonnet + carried_deferred_findings` using the same merge rules as in-loop rounds so the user sees one entry per distinct issue. **Deferred findings carried in from round 7 are appended to the residual** before merge — they describe issues the fixer couldn't resolve and may not be visible to the round-8 reviewers, so they need explicit surfacing rather than being silently dropped at the boundary. (A round-7 fixer that hits the abort path per the failure-mode rules — e.g., crashes twice or produces an unfixable empty-diff failure — skips round 8 and surfaces the abort error directly to the user.) The deduped residual finding list goes straight to the user:
 
 > "7 rounds didn't converge. Here's what's still flagged. Accept as-is, run more rounds, or fix manually?"
 

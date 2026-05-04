@@ -8,6 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROMPTS_DIR="$SCRIPT_DIR/prompts"
 
 SKILLS=(
+    "burndown-reviews"
     "systematic-debugging"
     "test-driven-development"
     "writing-plans"
@@ -23,6 +24,24 @@ PASSED=0
 FAILED=0
 RESULTS=()
 
+# Per-test setup
+# Sets MAX_TURNS and performs any fixture setup needed for the skill.
+MAX_TURNS=3
+case_setup() {
+    MAX_TURNS=3
+    case "$1" in
+        burndown-reviews)
+            MAX_TURNS=7
+            cat > /tmp/burndown-test-spec.md <<'EOF'
+# Test Spec for Burndown-Reviews Triggering
+
+## Motivation
+A minimal stub spec for the skill-triggering test fixture.
+EOF
+            ;;
+    esac
+}
+
 for skill in "${SKILLS[@]}"; do
     prompt_file="$PROMPTS_DIR/${skill}.txt"
 
@@ -32,8 +51,9 @@ for skill in "${SKILLS[@]}"; do
     fi
 
     echo "Testing: $skill"
+    case_setup "$skill"
 
-    if "$SCRIPT_DIR/run-test.sh" "$skill" "$prompt_file" 3 2>&1 | tee /tmp/skill-test-$skill.log; then
+    if "$SCRIPT_DIR/run-test.sh" "$skill" "$prompt_file" "$MAX_TURNS" 2>&1 | tee /tmp/skill-test-$skill.log; then
         PASSED=$((PASSED + 1))
         RESULTS+=("✅ $skill")
     else

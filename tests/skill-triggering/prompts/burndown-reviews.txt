@@ -1,0 +1,1 @@
+Help me complete a brainstorm we already started. Spec is drafted at /tmp/burndown-test-spec.md and I've already self-reviewed it inline. Per the brainstorming skill's checklist, what's next? Do that next step now.

@@ -121,22 +121,26 @@ for round in 1..7:
   if fix_list is empty:
     return "clean"
 
-  # F. dispatch fixer; fixer may return deferred_findings (see Failure modes)
-  deferred_findings = dispatch_fixer(model=fixer_model_for_stage, artifact, fix_list)
-  # any findings the fixer couldn't apply propagate to next round's judgment step
-  # deferred_findings retain their original finding IDs (e.g., "opus-r2-3" stays
+  # F. dispatch fixer; fixer returns deferred_findings (empty on a clean apply,
+  # non-empty if intra-round conflicts forced it to skip some). The assignment
+  # REPLACES the prior round's deferred list — anything from earlier rounds was
+  # already re-judged this round (it joined all_findings in step A) and has been
+  # routed to fix_list, disagreements, or override by step B.
+  fixer_result = dispatch_fixer(model=fixer_model_for_stage, artifact, fix_list)
+  if fixer_result is fatal_abort:
+    surface_error_and_exit()   # no round 8, no return value
+  deferred_findings = fixer_result.deferred   # may be []; replaces prior value
+  # deferred findings retain their original IDs (e.g., "opus-r2-3" stays
   # "opus-r2-3" when re-judged in round 3) so traceability is preserved
 
 # Round 8 — inventory pass: reviewers only, no judging, no fixer.
-# Round 8 runs whenever the for-loop completes without an early `return "clean"`
-# AND round 7's fixer dispatch exited without a fatal abort. (The dispatch itself
-# does not short-circuit the pass; the pass's RESULT determines whether we
-# return "clean" or "hard_escalate".)
+# Reached only when the for-loop completes naturally (no early `return "clean"`,
+# no fatal abort exit).
 final_opus, final_sonnet = parallel(
   reviewer(model=opus,   artifact, predecessor, stage),
   reviewer(model=sonnet, artifact, predecessor, stage),
 )
-residual = final_opus + final_sonnet
+residual = merge_duplicates(final_opus + final_sonnet)   # same merge rules as in-loop
 if residual is empty:
   return "clean"   # round 7's fixer happened to land it
 return ("hard_escalate", residual)
@@ -198,7 +202,7 @@ No fixed verdict vocabulary. The orchestrator interprets natural-language respon
 
 ### Round-7 hard escalate
 
-Rounds 1 through 7 are full review-judge-fix cycles. After round 7's fixer dispatch exits without a fatal abort (success, partial-with-deferrals, or unchanged-content-with-deferrals all qualify), the orchestrator runs **round 8 as a reviewer-only inventory pass** — dispatch both reviewers concurrently, do not judge, do not fix. (A round-7 fixer that hits the abort path per the failure-mode rules — e.g., crashes twice or produces an unfixable empty-diff failure — skips round 8 and surfaces the abort error directly to the user.) The combined residual finding list goes straight to the user:
+Rounds 1 through 7 are full review-judge-fix cycles. After round 7's fixer dispatch exits without a fatal abort (success, partial-with-deferrals, or unchanged-content-with-deferrals all qualify), the orchestrator runs **round 8 as a reviewer-only inventory pass** — dispatch both reviewers concurrently, do not judge, do not fix. The orchestrator then runs the same merge rules used inside the loop on the combined `final_opus + final_sonnet` set so the user sees one entry per distinct issue, not two near-identical entries from each reviewer. (A round-7 fixer that hits the abort path per the failure-mode rules — e.g., crashes twice or produces an unfixable empty-diff failure — skips round 8 and surfaces the abort error directly to the user.) The deduped residual finding list goes straight to the user:
 
 > "7 rounds didn't converge. Here's what's still flagged. Accept as-is, run more rounds, or fix manually?"
 
@@ -213,8 +217,9 @@ The user can extend by N rounds, accept the current state, or take over.
 - **Fixer claims success but the artifact's content is unchanged** — verified via content hash (e.g., sha256) before and after dispatch. mtime is unreliable as a signal across filesystems and tools and is not used.
   - For prose artifacts (spec, plan): the hash is over the artifact file's full bytes.
   - For code artifacts (impl): the hash is over the **concatenated full contents of the files in `diff_paths`** (sorted by path), not over git-diff output. This catches reverts-to-base (which would produce an empty diff before and after) and avoids false positives from unrelated git operations.
-  - **Unchanged content + non-empty deferred list = legitimate** (the fixer determined it could apply none of the findings cleanly; that's the intended use of the deferred-findings exit). The orchestrator **does not retry** in this case — it advances directly to round N+1 with the deferred findings carried into the next round's judgment step. **Unchanged content + empty deferred list + non-empty fix list = failure.** In the failure case, retry once, abort if still failing.
-  - **New files** (impl stage): if the fixer creates a new file outside `diff_paths` to address a finding (e.g., a missing test file), the fixer reports the new path explicitly. The orchestrator extends `diff_paths` to include it before the next round, which both expands the hash domain and gives next round's reviewers visibility into the new file. The first round in which a new file appears is exempt from the unchanged-content failure check, since the hash domain changed by design.
+  - **Unchanged content + non-empty deferred list = legitimate** (the fixer determined it could apply none of the findings cleanly; that's the intended use of the deferred-findings exit). The orchestrator **does not retry** in this case — it advances directly to round N+1 with the deferred findings carried into the next round's judgment step. Consecutive unchanged-content-with-deferrals rounds are tolerated (no special early-abort condition); they resolve naturally via round-8 hard escalate. **Unchanged content + empty deferred list + non-empty fix list = failure.** In the failure case, retry once, abort if still failing.
+  - **New files** (impl stage): if the fixer creates a new file outside `diff_paths` to address a finding (e.g., a missing test file), the fixer reports the new path explicitly in its return value. The unchanged-content failure check is **skipped for any round in which the fixer reports newly-created paths** — the new-file report is itself authoritative evidence that the fixer did work, so the hash equality (which would still hold over the original `diff_paths` since the hash never sees the new file pre-fixer) is not a failure signal. The orchestrator then extends its in-loop copy of `diff_paths` to include the new paths before the next round, so subsequent reviewer dispatches and subsequent hash checks both cover the expanded set.
+  - **`diff_paths` ownership and lifetime.** The burndown-reviews orchestrator maintains its own mutable copy of `diff_paths` for the duration of the loop (extensions included). Newly-added paths persist for all subsequent rounds within the loop. SDD's originally-recorded value is **not altered** — when the loop exits, that record is unchanged.
 - **Intra-round fix conflicts → deferred findings.** When multiple accepted findings touch overlapping content (e.g., two findings edit the same paragraph in incompatible ways), the fixer applies what it can using its own judgment and returns the artifact in the best state it could achieve plus an explicit list of findings it was unable to apply — the **deferred findings** for this round. The orchestrator passes the deferred list to the next round so the next round's judgment step sees them alongside the new reviewer output. Deferred findings retain their original IDs (a finding stamped `opus-r2-3` keeps that ID when judged again in round 3). **This is the sole exception to the "all findings fixed each round" rule** — deferred findings are by definition findings the fixer could not apply, not findings the orchestrator chose to defer. User-resolved "keep" findings (escalated disagreements the user said to apply) enter the fix list and are subject to the same deferral rules as reviewer findings; user-resolved "skip" findings are dropped from this round and not re-reviewed (reviewers may re-flag them next round per the statelessness caveat).
 - **Override of a previously-deferred finding.** When a deferred finding from a prior round is judged again in the current round and the orchestrator picks the **override** verdict (rather than accept or escalate), the finding is dropped silently with the same semantics as overriding a fresh reviewer finding. The ID is retired. This is intentional: the deferred-list mechanism preserves traceability, but the orchestrator retains full authority to decide a previously-deferred issue is no longer worth pursuing.
 - **Retries are sub-steps within a round.** A reviewer or fixer retry does not consume a round slot; the round counter only advances when the round completes (or returns clean / hard_escalate).

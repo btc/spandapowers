@@ -45,7 +45,7 @@ A separate small public repo, `btc/claude-plugins`, holds a single file: `.claud
 
 ```text
 /plugin marketplace add btc/claude-plugins
-/plugin uninstall superpowers@claude-plugins-official
+/plugin uninstall superpowers@claude-plugins-official  # only if upstream is currently installed; skip on fresh installs
 /plugin install superpowers@btc-plugins
 ```
 
@@ -80,6 +80,12 @@ Pseudocode (illustrative; the actual loop lives in the skill prose):
 
 ```
 deferred_findings = []   # carried over from prior round's fixer (intra-round conflicts)
+prev_deferred_id_set = None   # for non-progress detection (see step F-bis)
+prev_artifact_hash = None     # for non-progress detection
+# fixer_model_for_stage: sonnet for spec/plan, opus for impl;
+# overridable by user voice (last-write wins). The voice override is
+# captured by the parent skill (or by burndown-reviews' own pause-points)
+# and threaded into this variable before each fixer dispatch.
 
 for round in 1..7:
   # A. dispatch reviewers concurrently
@@ -117,43 +123,74 @@ for round in 1..7:
                                                 # (with optional user-authored fix text
                                                 # overriding the reviewer's suggested_fix)
 
+  # NOTE: step D's surface_to_user is BLOCKING — the loop pauses here until the
+  # user finishes resolving every escalated disagreement before step E runs.
+
   # E. end early on clean review.
   # An empty fix_list here IS genuine clean: prior-round deferred findings were
   # folded into all_findings in step A and have already been routed to fix_list,
   # disagreements, or override by step B. If none survived (every finding was
   # accepted-and-merged-away, overridden, or escalated-and-user-skipped), there
   # is nothing to fix this round. "Clean" here means "no work remains," not
-  # "reviewers found nothing" — user-skipped escalations count as cleared.
+  # "reviewers found nothing" — user-skipped escalations count as cleared, and
+  # an orchestrator-override of every finding (fresh + carried-deferred) also
+  # counts as cleared since the orchestrator has full authority to retire IDs.
   if fix_list is empty:
     return "clean"
 
   # F. dispatch fixer. dispatch_fixer encapsulates the full Failure-modes state
   # machine: pre/post content-hash check, single retry on unchanged-with-empty-
-  # deferred failure, the new-files report, and the fatal_abort path. It returns
-  # either {deferred: [...]} (possibly empty) on success or signals fatal_abort.
+  # deferred failure, the new-files report, deletions/moves report, and the
+  # fatal_abort path. It returns {deferred, created_paths, deleted_paths}
+  # (any may be empty) on success or signals fatal_abort.
   # The assignment REPLACES the prior round's deferred list — anything from
   # earlier rounds was already re-judged in step B above.
   fixer_result = dispatch_fixer(model=fixer_model_for_stage, artifact, fix_list)
   if fixer_result is fatal_abort:
-    surface_error_and_exit()   # no round 8, no return value
+    abort_error = fixer_result.error
+    break   # exit loop early; round 8 inventory still runs so the user gets
+            # both the abort error AND a current-state finding list
   deferred_findings = fixer_result.deferred   # may be []; replaces prior value
   # deferred findings retain their original IDs (e.g., "opus-r2-3" stays
   # "opus-r2-3" when re-judged in round 3) so traceability is preserved
 
+  # F-bis. non-progress detection: if two consecutive rounds produce unchanged
+  # artifact AND identical deferred-ID set, the fixer is failing on the same
+  # items repeatedly. Short-circuit to the round-8 inventory pass.
+  current_artifact_hash = hash_of(artifact)
+  current_deferred_id_set = {f.id for f in deferred_findings}
+  if (current_artifact_hash == prev_artifact_hash and
+      current_deferred_id_set == prev_deferred_id_set and
+      current_deferred_id_set is not empty):
+    break   # exit loop early; round 8 inventory still runs
+  prev_artifact_hash = current_artifact_hash
+  prev_deferred_id_set = current_deferred_id_set
+
 # Round 8 — inventory pass: reviewers only, no judging, no fixer.
-# Reached only when the for-loop completes naturally (no early `return "clean"`,
-# no fatal abort exit).
+# Reached on every loop exit path EXCEPT early `return "clean"`:
+# - normal for-loop completion (rounds 1..7 all dispatched fixer cleanly)
+# - non-progress short-circuit (step F-bis broke out)
+# - fatal fixer abort (loop broke out with abort_error set)
+# In the abort case, the abort_error is surfaced to the user alongside
+# the residual list at the bottom of this block.
 final_opus, final_sonnet = parallel(
   reviewer(model=opus,   artifact, predecessor, stage),
   reviewer(model=sonnet, artifact, predecessor, stage),
 )
-# Any non-empty deferred_findings carried in from round 7 are appended to the
-# residual so the user sees them — they describe issues the fixer couldn't
-# resolve and which may not be visible in the artifact text the round-8
-# reviewers see.
-residual = merge_duplicates(final_opus + final_sonnet + deferred_findings)
-if residual is empty:
+# Round-8 reviewer findings are stamped opus-r8-{n} / sonnet-r8-{n} like every
+# other round. Any non-empty deferred_findings carried in are appended to the
+# residual (with their original older IDs) so the user sees them — they
+# describe issues the fixer couldn't resolve and may not be visible in the
+# artifact text the round-8 reviewers see. Carried-deferred entries are
+# labeled distinctly in the user-facing surface (e.g., "[deferred since r2]")
+# so the user understands why they survived.
+residual = merge_duplicates(
+  stamp(final_opus, "opus", 8) + stamp(final_sonnet, "sonnet", 8) + deferred_findings
+)
+if residual is empty and abort_error is None:
   return "clean"   # round 7's fixer happened to land it
+if abort_error is not None:
+  return ("hard_escalate", residual, abort_error)
 return ("hard_escalate", residual)
 ```
 
@@ -184,7 +221,9 @@ After judgment, the orchestrator merges near-duplicates. The same merge rules ap
 - **Severity adjacency** (applies to both lists): **H↔M** are mergeable; **M↔L** are mergeable; **H↔L** are not (treat as separate entries). Non-transitive — M does not bridge H and L. Merged severity = max of the two.
 - **Overlapping line ranges** (impl stage): when two code-stage findings have overlapping line ranges at the same path, the merged location is the **union** (smallest start, largest end).
 - **ID survival on merge:** when a deferred finding (carrying an older round's ID, e.g., `opus-r2-3`) merges with a fresh finding (e.g., `sonnet-r3-1`), the merged entry retains the **older deferred ID** to preserve the traceability chain. When two fresh findings of the same round merge, the orchestrator picks either ID (no specific rule).
-- Conflicting fixes at the same location in the **fix list** (one finding says "lock decision X", another says "defer decision X") cannot be merged into a single accepted entry. The orchestrator must pick one — accept one and override or escalate the other, or accept the spirit of both and rewrite the merged fix instruction in its own words to resolve the conflict before passing to the fixer. Two contradictory `suggested_fix` strings must never reach the fixer at the same location.
+- Conflicting fixes at the same location in the **fix list** (one finding says "lock decision X", another says "defer decision X") cannot be merged into a single accepted entry. The orchestrator's preferred path is to **pick one** — accept one finding and override or escalate the other. Reserve **orchestrator-authored rewrites** (synthesizing a new fix instruction that satisfies the spirit of both) for cases where the two findings are genuinely complementary rather than contradictory. When the orchestrator does rewrite, it logs the rewritten instruction in its round summary so the change is auditable — orchestrator-authored fix text should never be silent. Two contradictory `suggested_fix` strings must never reach the fixer at the same location.
+
+**Judgment runs before merge.** Step B (judgment) runs before step C (merge), so an overridden deferred finding cannot pull a fresh same-issue finding into its retired ID — by the time merge would consider them, the overridden finding has already been dropped. The fresh finding stands on its own.
 
 The orchestrator makes the "real issue?" / "fix sound?" / "same intervention?" judgments in prose. There is no string-similarity threshold or other mechanical rule; this is a reading-comprehension task and Claude is the right tool for it.
 
@@ -208,24 +247,24 @@ No fixed verdict vocabulary. The orchestrator interprets natural-language respon
 
 **Disagreements are deduped before surfacing.** The orchestrator runs the same merge rules on the disagreement list as on the fix list (same location + compatible suggested_fix → collapse; H↔M and M↔L adjacent; severity = max). The user sees one entry per distinct issue, not two near-identical entries from each reviewer.
 
-**Edge case (high escalation rate):** if the orchestrator finds itself escalating many findings in a single round, that's a signal the reviewer prompt or rubric may be miscalibrated, *or* that the orchestrator is being too cautious about overriding. The orchestrator flags it: "I'm escalating N reviewer findings this round, which is unusual. Want me to keep going, or pause and look at the reviewer prompts?" The threshold is the orchestrator's judgment, not a fixed number — what matters is the deviation from the run's normal cadence.
+**Edge case (high escalation rate):** if the orchestrator finds itself escalating many findings in a single round, that's a signal the reviewer prompt or rubric may be miscalibrated, *or* that the orchestrator is being too cautious about overriding. The orchestrator flags it with concrete options: "I'm escalating N reviewer findings this round, which is unusual. Want me to (a) skip remaining escalations this round (treat them as confident overrides), (b) abort the loop so you can edit the reviewer agent definition and restart, or (c) keep going as-is?" The threshold is the orchestrator's judgment — for round 1, "unusual" is measured against the round's own total (e.g., more than half of all findings escalated); from round 2 onward, against the run's prior-round cadence.
 
 **No silent defaults.** If the user's reply is ambiguous, the orchestrator asks again rather than guessing. (Confident overrides without escalation are not "silent defaults" — they're explicit orchestrator decisions, distinct from guessing on user input.)
 
 ### Round-7 hard escalate
 
-Rounds 1 through 7 are full review-judge-fix cycles. After round 7's fixer dispatch exits without a fatal abort (success, partial-with-deferrals, or unchanged-content-with-deferrals all qualify), the orchestrator runs **round 8 as a reviewer-only inventory pass** — dispatch both reviewers concurrently, do not judge, do not fix. The orchestrator then merges `final_opus + final_sonnet + carried_deferred_findings` using the same merge rules as in-loop rounds so the user sees one entry per distinct issue. **Deferred findings carried in from round 7 are appended to the residual** before merge — they describe issues the fixer couldn't resolve and may not be visible to the round-8 reviewers, so they need explicit surfacing rather than being silently dropped at the boundary. (A round-7 fixer that hits the abort path per the failure-mode rules — e.g., crashes twice or produces an unfixable empty-diff failure — skips round 8 and surfaces the abort error directly to the user.) The deduped residual finding list goes straight to the user:
+Rounds 1 through 7 are full review-judge-fix cycles. After they exit (whether by completing all seven, hitting the non-progress short-circuit, or hitting a fixer abort), the orchestrator runs **round 8 as a reviewer-only inventory pass** — dispatch both reviewers concurrently, do not judge, do not fix. The orchestrator then merges `final_opus + final_sonnet + carried_deferred_findings` using the same merge rules as in-loop rounds so the user sees one entry per distinct issue. Round-8 reviewer findings are stamped `opus-r8-{n}` / `sonnet-r8-{n}`; carried-deferred entries keep their older IDs and are **labeled distinctly** in the user-facing surface (e.g., a `[deferred since r2]` annotation) so the user understands why they survived. If the loop exited via fixer abort, the abort error is surfaced alongside the residual — the user sees both the failure mode and a current-state finding list. The deduped residual finding list goes straight to the user:
 
 > "7 rounds didn't converge. Here's what's still flagged. Accept as-is, run more rounds, or fix manually?"
 
 The user can extend by N rounds, accept the current state, or take over.
 
-**Extension semantics.** If the user says "run more rounds," the orchestrator continues with **full review-judge-fix cycles** (rounds 1–7 semantics, not inventory-only). Round numbering continues sequentially (round 9, round 10, ...). After the user-specified extension count is exhausted, the orchestrator runs another inventory pass — **identical mechanics to round 8: both reviewers concurrently, no judgment, no fixer dispatch** — and presents the residual to the user again. The user may extend again, accept, or take over. There is no upper bound on extensions — the user is in charge.
+**Extension semantics.** If the user says "run more rounds," the orchestrator continues with **full review-judge-fix cycles** (rounds 1–7 semantics, not inventory-only). Round numbering continues sequentially (round 9, round 10, ...). The extension starts a fresh inner-loop invocation with `deferred_findings = []` and the non-progress trackers (`prev_artifact_hash`, `prev_deferred_id_set`) reset, so prior-loop state doesn't contaminate the extension. After the user-specified extension count is exhausted, the orchestrator runs another inventory pass — **identical mechanics to round 8: both reviewers concurrently, no judgment, no fixer dispatch** — and presents the residual to the user again. The user may extend again, accept, or take over. There is no upper bound on extensions — the user is in charge.
 
 ### Failure modes
 
 - **Reviewer subagent crashes or times out** → retry once. If still failing, abort the loop and surface to the user with a clear error.
-- **Fixer subagent crashes or times out** → same. A fatal fixer abort in **any** round (1–7) immediately exits the loop with the error surfaced to the user; remaining rounds and the round-8 inventory pass are skipped.
+- **Fixer subagent crashes or times out** → same. A fatal fixer abort in **any** round (1–7) immediately exits the loop with the error surfaced to the user; remaining rounds are skipped. The round-8 inventory pass **does** still run on a fixer abort — it's cheap (two reviewer dispatches, no fixer) and gives the user a current-state finding list alongside the abort error, which is more actionable than the abort alone.
 - **Fixer claims success but the artifact's content is unchanged** — verified via content hash (e.g., sha256) before and after dispatch. mtime is unreliable as a signal across filesystems and tools and is not used.
   - For prose artifacts (spec, plan): the hash is over the artifact file's full bytes.
   - For code artifacts (impl): the hash is over the **concatenated full contents of the files in `diff_paths`** (sorted by path), not over git-diff output. This catches reverts-to-base (which would produce an empty diff before and after) and avoids false positives from unrelated git operations.
@@ -247,7 +286,7 @@ The user can extend by N rounds, accept the current state, or take over.
 - Predecessor context — a structured value whose shape varies by stage:
   - `spec` stage: a single path to a context file `<artifact_basename>.context.md` that the brainstorming skill writes alongside the spec before invoking burndown-reviews. Best-effort content: the user's original request, locked-in design decisions, and explicit non-goals — sections may be empty if the brainstorm didn't produce that material.
   - `plan` stage: a single path to the spec the plan was derived from.
-  - `impl` stage: an object `{ plan_path, diff_base, diff_paths }` where `plan_path` points to the implementation plan, `diff_base` is a **commit SHA** (not a branch name) captured by the `subagent-driven-development` orchestrator in its own process **before any Task tool call is issued** — including parallel-dispatch messages — and `diff_paths` is the explicit list of files the impl run is expected to have touched. The reviewer reads the diff between `diff_base` and `HEAD` restricted to `diff_paths`. SDD passes the recorded SHA verbatim to burndown-reviews — by the time the burndown runs, the working tree may have advanced, but `diff_base` stays anchored to the pre-impl state.
+  - `impl` stage: an object `{ plan_path, diff_base, diff_paths }` where `plan_path` points to the implementation plan, `diff_base` is a **commit SHA** (not a branch name) captured by the `subagent-driven-development` orchestrator in its own process **before any Task tool call is issued** — including parallel-dispatch messages — and `diff_paths` is the explicit list of files the impl run is expected to have touched. The reviewer reads the diff between `diff_base` and `HEAD` restricted to `diff_paths`. SDD passes the recorded SHA verbatim to burndown-reviews — by the time the burndown runs, the working tree may have advanced, but `diff_base` stays anchored to the pre-impl state. **Precondition:** SDD must verify a clean working tree before recording `diff_base`. If uncommitted work exists, SDD prompts the user to commit or stash and aborts the run if neither happens; otherwise pre-existing uncommitted changes would be attributed to the impl run and reviewers would critique code SDD didn't write.
 
 The reviewer subagent does not receive its own model name or round number — the orchestrator stamps those into finding IDs after receiving the reviewer's output (see Output format below).
 
@@ -285,6 +324,8 @@ The reviewer emits sequential numeric IDs (`1`, `2`, `3`, ...). The orchestrator
 **Location specifier rules:**
 
 - **Prose artifacts (spec, plan):** `<path> § "<H2>" / "<H3>" / ...` — the **full heading chain** from the H2 down to the section containing the issue. Examples: `spec.md § "Architecture" / "Failure modes"` (two-level), `spec.md § "Reviewer subagent" / "Inputs"` (two-level), `spec.md § "Architecture" / "The loop" ¶3` (two-level + paragraph index). Top-level sections use a single heading: `spec.md § "Architecture"`. The chain disambiguates section names that recur under different parents.
+- **Pre-H2 / preamble content:** `<path> § (preamble)` — for content under H1 with no H2, or content above the first H2.
+- **Fenced code blocks within prose:** `<path> § "<H2>" / "<H3>" code-block:L<n>` where `L<n>` is the line number relative to the start of the code block. Lets reviewers locate specific pseudocode lines precisely.
 - **Code artifacts (impl):** `<path>:L<start>-L<end>` — e.g., `src/loop.ts:L42-58`. Single-line issues: `src/loop.ts:L42`.
 - **Either is acceptable for impl-stage prose docs** (e.g., README updates).
 
@@ -380,7 +421,7 @@ Reviewer dispatch is always Opus + Sonnet concurrently, regardless of stage. Onl
 
 The orchestrator listens for these intents at the noted points:
 
-- **"Skip the burndown for this one"** — detected by the parent skill (brainstorming / writing-plans / subagent-driven-development) at the start of its run, before it begins producing the artifact. If detected, the parent skill skips the burndown invocation and goes straight to the user-review gate when the artifact is written.
+- **"Skip the burndown for this one"** — detected by the parent skill (brainstorming / writing-plans / subagent-driven-development) at the start of its run, before it begins producing the artifact. If detected, the parent skill skips the burndown invocation and goes straight to the user-review gate when the artifact is written. **Scope is the current parent skill's checkpoint only** — a "skip" said during brainstorming does not propagate to writing-plans or subagent-driven-development; the user must repeat the request at each subsequent skill if they want the skip to continue. **Ambiguous skip intent** ("maybe skip it", "I'm not sure I need this") is treated as **not skipping** (the conservative default), consistent with the "no silent defaults" rule.
 - **"Run more rounds"** — detected by burndown-reviews after a hard-escalate (round 8 inventory). The user specifies a number; the orchestrator continues from round 9 onward for that many additional full review-judge-fix cycles.
 - **Override the fixer model** — detected by burndown-reviews at the start of round 1, on each disagreement-pause, and during the round-8 hard-escalate user exchange (so the user can re-tune mid-extension without restarting). **Last-write semantics**: the most recently stated override applies to all subsequent rounds; the user may change their mind mid-loop and the new value takes effect immediately. The user can specify any supported model ("use Opus as fixer this time" for spec/plan stages; "use Sonnet as fixer this time" for impl stage). Symmetric — the override works in either direction.
 
@@ -427,6 +468,10 @@ Reconcile and the loop run inside the skill's prose, not as a callable function 
   - Fixer reports deferred findings (intra-round conflicts) → those findings join the next round's judgment step alongside fresh reviewer output.
   - Extension after hard escalate: user requests N additional rounds → orchestrator runs full review-judge-fix cycles for rounds 9 through 8+N → another inventory pass at the end.
   - Confident override: orchestrator drops a reviewer finding without escalation when it can verify the finding is wrong against the spec or locked decisions.
+  - Deferred-override path: a deferred finding from round N is judged in round N+1 and overridden — its ID is retired and does not appear in round N+2's judgment input.
+  - ID-survival merge: a deferred finding `opus-r2-3` and a fresh finding `sonnet-r3-1` at the same location with compatible fixes → merged entry retains the older `opus-r2-3` ID.
+  - Non-progress short-circuit: two consecutive rounds produce identical artifact hash + identical deferred-ID set → loop breaks out early; round 8 inventory still runs.
+  - Fixer-abort with round 8: round-7 fixer aborts → loop exits → round 8 still dispatches reviewers → user sees abort error alongside residual list.
 
 ### Integration (real subagent dispatch, fixture artifacts; gated by default)
 

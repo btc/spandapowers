@@ -18,6 +18,8 @@ Assume they are a skilled developer, but know almost nothing about our toolset o
 **Save plans to:** `docs/superpowers/plans/YYYY-MM-DD-<feature-name>.md`
 - (User preferences for plan location override this default)
 
+**Burndown skip detection (precondition).** Before starting plan-writing, check whether the user has expressed an intent to skip the burndown review for this run (e.g., "skip the burndown for this one"). Treat ambiguous intent ("maybe skip it") as not skipping (conservative default). If a clear skip intent is detected, set `burndown_skip = true`; otherwise leave it unset. (Same wording is used in brainstorming and subagent-driven-development to keep the contract consistent across all three parent skills.)
+
 ## Scope Check
 
 If the spec covers multiple independent subsystems, it should have been broken into sub-project specs during brainstorming. If it wasn't, suggest breaking this into separate plans — one per subsystem. Each plan should produce working, testable software on its own.
@@ -130,6 +132,14 @@ After writing the complete plan, look at the spec with fresh eyes and check the 
 **3. Type consistency:** Do the types, method signatures, and property names you used in later tasks match what you defined in earlier tasks? A function called `clearLayers()` in Task 3 but `clearFullLayers()` in Task 7 is a bug.
 
 If you find issues, fix them inline. No need to re-review — just fix and move on. If you find a spec requirement with no task, add the task.
+
+## Burndown Review Pass
+
+After the inline self-review passes, and before the Execution Handoff:
+
+If `burndown_skip` is true (re-check intent here; last-write wins): skip this section.
+
+Otherwise: invoke the `burndown-reviews` skill with `stage=plan`, `artifact_path=<plan file path>`, `predecessor=<spec file path>`, `fixer_model=opus`. Wait for the loop to terminate. The trajectory report is shown to the user as part of its return.
 
 ## Execution Handoff
 

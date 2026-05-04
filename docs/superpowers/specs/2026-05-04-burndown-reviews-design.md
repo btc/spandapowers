@@ -83,7 +83,7 @@ deferred_findings = []   # carried over from prior round's fixer (intra-round co
 prev_deferred_id_set = None   # for non-progress detection (see step F-bis)
 prev_artifact_hash = None     # for non-progress detection
 abort_error = None            # set only on fatal fixer abort path
-# fixer_model_for_stage: sonnet for spec/plan, opus for impl;
+# fixer_model_for_stage: opus for all stages (spec, plan, impl);
 # overridable by user voice (last-write wins). The voice override is
 # captured by the parent skill (or by burndown-reviews' own pause-points)
 # and threaded into this variable before each fixer dispatch.
@@ -390,11 +390,13 @@ Empty list if clean. No preamble, no summary, no commentary outside findings.
 
 "You are a fixer applying review findings to a `{stage}` artifact. Address every finding. Preserve unrelated content. Make minimal edits — fix what's flagged, nothing else."
 
-### Stage-to-model mapping
+### Fixer model
 
-- `spec` → `model=sonnet`
-- `plan` → `model=sonnet`
+- `spec` → `model=opus`
+- `plan` → `model=opus`
 - `impl` → `model=opus`
+
+The fixer always runs Opus regardless of stage. (Earlier drafts had spec/plan→sonnet to save cost; that was changed in favor of consistent quality.) Overridable by user voice.
 
 ### Output
 
@@ -446,7 +448,7 @@ Each of `brainstorming`, `writing-plans`, and `subagent-driven-development` incl
   - `spec` stage: a path to `<artifact_basename>.context.md`.
   - `plan` stage: a path to the spec.
   - `impl` stage: an object `{ plan_path, diff_base, diff_paths }` populated by SDD itself (see Reviewer subagent § Inputs).
-- `fixer_model` — `sonnet` for spec & plan; `opus` for impl. Overridable by user voice.
+- `fixer_model` — `opus` for all stages. Overridable by user voice.
 - `stage` — `spec` | `plan` | `impl`. Used in reviewer prompts to set context.
 
 Reviewer dispatch is always Opus + Sonnet concurrently, regardless of stage. Only the fixer model varies.
@@ -466,7 +468,7 @@ The orchestrator listens for these intents at the noted points:
 
 - **"Skip the burndown for this one"** — detected by the parent skill (brainstorming / writing-plans / subagent-driven-development) at the start of its run, before it begins producing the artifact. If detected, the parent skill skips the burndown invocation and goes straight to the user-review gate when the artifact is written. **Scope is the current parent skill's checkpoint only** — a "skip" said during brainstorming does not propagate to writing-plans or subagent-driven-development; the user must repeat the request at each subsequent skill if they want the skip to continue. **Ambiguous skip intent** ("maybe skip it", "I'm not sure I need this") is treated as **not skipping** (the conservative default), consistent with the "no silent defaults" rule.
 - **"Run more rounds"** — detected by burndown-reviews after a hard-escalate (round 8 inventory). The user specifies a number; the orchestrator continues from round 9 onward for that many additional full review-judge-fix cycles.
-- **Override the fixer model** — detected by burndown-reviews at the start of round 1, on each disagreement-pause, and during the round-8 hard-escalate user exchange (so the user can re-tune mid-extension without restarting). **Last-write semantics**: the most recently stated override applies to all subsequent rounds; the user may change their mind mid-loop and the new value takes effect immediately. The user can specify any supported model ("use Opus as fixer this time" for spec/plan stages; "use Sonnet as fixer this time" for impl stage). Symmetric — the override works in either direction.
+- **Override the fixer model** — detected by burndown-reviews at the start of round 1, on each disagreement-pause, and during the round-8 hard-escalate user exchange (so the user can re-tune mid-extension without restarting). **Last-write semantics**: the most recently stated override applies to all subsequent rounds; the user may change their mind mid-loop and the new value takes effect immediately. Default is Opus at every stage; the user can override to Sonnet (or any supported model) at any stage if they want to trade quality for cost.
 
 No env vars, no `settings.json` keys, no flags.
 

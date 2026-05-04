@@ -22,8 +22,7 @@
 - `skills/burndown-reviews/SKILL.md` — orchestration loop, prose-driven
 - `agents/burndown-reviewer.md` — single agent file; orchestrator picks model at dispatch
 - `agents/burndown-fixer.md` — single agent file; orchestrator picks model at dispatch
-- `tests/burndown-reviews/run-triggering-test.sh` — skill-triggering test
-- `tests/burndown-reviews/triggering-prompt.txt` — naive prompt that should activate burndown-reviews
+- `tests/skill-triggering/prompts/burndown-reviews.txt` — naive prompt for the existing skill-triggering harness
 - `tests/burndown-reviews/MANUAL-VERIFICATION.md` — fixture-based manual verification procedure
 - `tests/burndown-reviews/fixtures/flawed-spec.md` — deliberately-flawed spec for convergence test
 - `tests/burndown-reviews/fixtures/clean-spec.md` — clean spec, should converge in 1 round
@@ -32,8 +31,10 @@
 - `skills/brainstorming/SKILL.md` — add skip detection at start; insert burndown step between current steps 7 and 8; write context file as part of new burndown step
 - `skills/writing-plans/SKILL.md` — add skip detection at start; insert burndown invocation immediately before the Execution Handoff section
 - `skills/subagent-driven-development/SKILL.md` — add skip detection at start; capture `diff_base` at first step before any Task call; insert burndown invocation immediately before the final hand-off to `finishing-a-development-branch`
+- `tests/skill-triggering/run-all.sh` — add `burndown-reviews` to the `SKILLS` array
 - `package.json` — bump version to `5.0.7+btc.1` (semver build metadata; does not affect precedence)
 - `RELEASE-NOTES.md` — add `5.0.7+btc.1` entry describing the fork divergence
+- `docs/superpowers/specs/2026-05-04-burndown-reviews-design.md` — append `(actual file: RELEASE-NOTES.md)` to the File Layout's `CHANGELOG.md` line, fixing the stale spec reference (committed alongside Task 10's RELEASE-NOTES update)
 
 **Marketplace repo (separate, optional final chunk):**
 - Create new GitHub repo `btc/claude-plugins` (public)
@@ -260,7 +261,7 @@ For each round 1 through 7:
    - **Unchanged content + empty deferred list + non-empty fix_list = failure.** Retry once. If still unchanged, set `abort_error` and break (fatal abort).
    - **New-files exemption:** if `fixer_result.created_paths` is non-empty, skip the unchanged-content failure check for this round entirely — the new-file report is itself authoritative evidence the fixer did work. Extend in-loop `diff_paths` with the new paths.
    - **Reviewer/fixer crash retry:** any reviewer or fixer crash retries once within the same round (does not consume a round slot). Two consecutive crashes → fatal abort.
-   - **Conflicting fixes never reach the fixer:** before this dispatch, the merge step (D) must have ensured that two contradictory `suggested_fix` strings at the same location were resolved (orchestrator picks one, escalates the other, or authors a logged rewrite). The fixer must never receive contradictory instructions for the same location.
+   - **Conflicting fixes never reach the fixer:** before this dispatch, the merge step (C) must have ensured that two contradictory `suggested_fix` strings at the same location were resolved (orchestrator picks one, escalates the other, or authors a logged rewrite). The fixer must never receive contradictory instructions for the same location.
    On fatal abort, set `abort_error = fixer_result.error` and break out of the loop — round 8 still runs (the user gets the abort error alongside a current-state finding list).
 7. **(F-bis) Update `deferred_findings` and check non-progress** — split into two atomic sub-steps:
    - **(F-bis-1)** Update `deferred_findings = fixer_result.deferred` (replaces, not appends — earlier-round deferrals were already re-judged in step B). Update in-loop `diff_paths` from `fixer_result.created_paths` (extend) and `fixer_result.deleted_paths` (remove).
@@ -539,7 +540,15 @@ Two things must happen before any Task call is issued (i.e., before "The Process
 
 - [ ] **Step 3: Insert the burndown invocation before the final hand-off**
 
-Find the line(s) describing the transition to `finishing-a-development-branch`. Use Edit to insert immediately before it:
+The reference to `finishing-a-development-branch` in the current SDD SKILL.md appears in (i) the dot diagram inside `## The Process` and (ii) the `## Integration` list. The Burndown Review Pass should be a new `## Burndown Review Pass` H2 inserted **between `## The Process` and `## Integration`** (this is the natural position where SDD's process flow terminates). Find the H2 line numbers via:
+
+```bash
+grep -n "^## The Process\|^## Integration" skills/subagent-driven-development/SKILL.md
+```
+
+Use Edit to insert the new section immediately before `## Integration`. **Also update the dot diagram in `## The Process`** so its final edge (to `finishing-a-development-branch`) routes through a new "Burndown review pass" node, mirroring Task 4's diagram update for brainstorming.
+
+Section content:
 
 ```markdown
 ## Burndown Review Pass
@@ -586,17 +595,19 @@ The codebase already has a skill-triggering harness at `tests/skill-triggering/r
 
 The test verifies that `burndown-reviews` is triggered when a parent skill (brainstorming) reaches its checklist's burndown step. Because the harness only runs the prompt for `MAX_TURNS` (default 3), and brainstorming starts by asking clarifying questions before the burndown step, the prompt must give Claude enough context to skip ahead to a phase where burndown-reviews would be invoked. We do that by phrasing the prompt as a request that *resumes* a brainstorm at the spec-self-review checkpoint.
 
-- [ ] **Step 1: Create the prompt fixture and a stub spec for it to reference**
+- [ ] **Step 1: Create the prompt fixture**
+
+The skill-triggering harness checks for a real Skill-tool invocation of `burndown-reviews`. The prompt must push Claude all the way to invoking burndown-reviews — meaning Claude must invoke `brainstorming`, follow its checklist past the inline spec-self-review, and reach the new burndown step. With the harness's default `MAX_TURNS=3`, the prompt cannot start from "first turn of a brainstorm" — there isn't time. It needs to position Claude at a state where the next natural step IS the burndown invocation.
 
 Create `tests/skill-triggering/prompts/burndown-reviews.txt`:
 
 ```
-I've finished brainstorming a tiny feature with you. The spec is at /tmp/burndown-test-spec.md and I've already done the inline spec-self-review. Continue to the next checklist step.
+Help me complete a brainstorm we already started. Spec is drafted at /tmp/burndown-test-spec.md and I've already self-reviewed it inline. Per the brainstorming skill's checklist, what's next? Do that next step now.
 ```
 
-The phrasing requests *action* on the next step (not a description of it), which nudges Claude to actually invoke the next skill rather than just announce it.
+The phrasing (a) directly references the brainstorming skill (so Claude invokes it), (b) anchors at the post-self-review state (so the next step is the burndown invocation), and (c) requests action ("Do that next step now") not description.
 
-Because the prompt references `/tmp/burndown-test-spec.md`, the test harness must create that stub file before invoking. Add a setup step that runs before the harness call (in a wrapper script or as a manual step in `run-all.sh`):
+The test references `/tmp/burndown-test-spec.md`, so the harness must create a stub before invoking. Add this to `run-all.sh` (or as a per-test setup hook), running BEFORE `run-test.sh` is called for `burndown-reviews`:
 
 ```bash
 cat > /tmp/burndown-test-spec.md <<'EOF'
@@ -607,7 +618,7 @@ A minimal stub spec for the skill-triggering test fixture.
 EOF
 ```
 
-(Document this setup in the prompt file's first comment line if the harness doesn't support pre-test setup hooks.)
+If `run-all.sh` lacks per-test setup hooks, embed the setup as the first line of the prompt itself: `# (test harness: ensure /tmp/burndown-test-spec.md exists before running)` — then add a sed/grep-extraction step in `run-all.sh` that processes such comments. The simpler path is to extend `run-all.sh` with a one-line conditional setup for this skill specifically.
 
 - [ ] **Step 2: Add `burndown-reviews` to the SKILLS array in run-all.sh**
 
@@ -818,10 +829,11 @@ git add package.json
 git commit -m "Bump version to 5.0.7+btc.1"
 ```
 
-### Task 10: Add RELEASE-NOTES entry
+### Task 10: Add RELEASE-NOTES entry and fix spec File Layout reference
 
 **Files:**
 - Modify: `RELEASE-NOTES.md`
+- Modify: `docs/superpowers/specs/2026-05-04-burndown-reviews-design.md` (correct stale `CHANGELOG.md` reference)
 
 - [ ] **Step 1: Read the current top of RELEASE-NOTES**
 
@@ -856,11 +868,21 @@ Spec: `docs/superpowers/specs/2026-05-04-burndown-reviews-design.md`. Plan: `doc
 Run: `head -25 RELEASE-NOTES.md`
 Expected: shows the new entry above the v5.0.7 entry.
 
+- [ ] **Step 3.5: Fix the spec's stale CHANGELOG reference**
+
+The spec's File Layout section references `CHANGELOG.md` but the actual changelog file is `RELEASE-NOTES.md`. Locate the line:
+
+```bash
+grep -n "CHANGELOG.md" docs/superpowers/specs/2026-05-04-burndown-reviews-design.md
+```
+
+Use Edit to append `(actual file: RELEASE-NOTES.md)` to that line so the spec stops misleading future readers.
+
 - [ ] **Step 4: Commit**
 
 ```bash
-git add RELEASE-NOTES.md
-git commit -m "RELEASE-NOTES: v5.0.7+btc.1 fork divergence entry"
+git add RELEASE-NOTES.md docs/superpowers/specs/2026-05-04-burndown-reviews-design.md
+git commit -m "RELEASE-NOTES: v5.0.7+btc.1 fork divergence entry; fix spec File Layout"
 ```
 
 ### Task 11: Push the branch
@@ -965,7 +987,7 @@ git -C ~/Projects/src/claude-plugins push -u origin main
 
 (Verify with `gh --version`; `--push` was added in `gh` 2.36 and later.)
 
-- [ ] **Step 3: Verify**
+- [ ] **Step 2: Verify**
 
 Run: `gh repo view btc/claude-plugins --web` (or visit `https://github.com/btc/claude-plugins`).
 Expected: repo exists, public, contains README and `.claude-plugin/marketplace.json`.

@@ -79,6 +79,8 @@ The user only sees the final, post-burndown artifact at the user-review gate. Or
 Pseudocode (illustrative; the actual loop lives in the skill prose):
 
 ```
+deferred_findings = []   # carried over from prior round's fixer (intra-round conflicts)
+
 for round in 1..7:
   # A. dispatch reviewers concurrently
   opus_findings, sonnet_findings = parallel(
@@ -88,33 +90,44 @@ for round in 1..7:
   # orchestrator stamps reviewer + round into finding IDs post-hoc:
   # the reviewer itself emits sequential IDs ("1", "2", ...) and the
   # orchestrator namespaces them as e.g. "opus-r3-2" / "sonnet-r3-1".
+  # Deferred findings from the previous round join the judgment input.
   all_findings = stamp(opus_findings, "opus", round) +
-                 stamp(sonnet_findings, "sonnet", round)
+                 stamp(sonnet_findings, "sonnet", round) +
+                 deferred_findings
 
-  # B. orchestrator judges each finding
+  # B. orchestrator judges each finding (3 outcomes: accept / override / escalate)
   fix_list, disagreements = [], []
   for f in all_findings:
-    if orchestrator_agrees(f):
+    verdict = orchestrator_judgment(f)
+    if verdict == "accept":
       fix_list.append(f)
-    else:
-      disagreements.append(f)   # orchestrator thinks reviewer is wrong
+    elif verdict == "override":
+      pass   # confidently dropped, no user involvement
+    elif verdict == "escalate":
+      disagreements.append(f)   # genuinely uncertain — user decides
 
   # C. merge near-duplicate accepted findings (see Reconcile algorithm)
   fix_list = merge_duplicates(fix_list)
+  disagreements = merge_duplicates(disagreements)   # same merge rules
 
-  # D. pause if orchestrator disagrees with any reviewer findings
+  # D. pause if any escalated disagreements remain
   if disagreements:
     resolved = surface_to_user(disagreements)   # natural-language exchange
-    fix_list += resolved.kept                   # any disagreements user wants applied
+    fix_list += resolved.kept                   # entries user wants applied
+                                                # (with optional user-authored fix text
+                                                # overriding the reviewer's suggested_fix)
 
   # E. end early on clean review
   if fix_list is empty:
     return "clean"
 
-  # F. dispatch fixer (rounds 1..7)
-  dispatch_fixer(model=fixer_model_for_stage, artifact, fix_list)
+  # F. dispatch fixer (rounds 1..7); fixer may return deferred_findings (see Failure modes)
+  deferred_findings = dispatch_fixer(model=fixer_model_for_stage, artifact, fix_list)
+  # any findings the fixer couldn't apply propagate to next round's judgment step
 
-# Round 8 — inventory pass: reviewers only, no judging, no fixer
+# Round 8 — inventory pass: reviewers only, no judging, no fixer.
+# Round 8 ALWAYS runs if the loop reaches round 7's fixer dispatch — there is no
+# post-round-7 verification step that can short-circuit the inventory pass.
 final_opus, final_sonnet = parallel(
   reviewer(model=opus,   artifact, predecessor, stage),
   reviewer(model=sonnet, artifact, predecessor, stage),
@@ -137,13 +150,16 @@ Disagreement here means **orchestrator vs. reviewer**, not reviewer vs. reviewer
 For each finding the orchestrator decides one of:
 
 1. **Accept** — the finding is real and the suggested fix is sound. Goes into the fix list.
-2. **Disagree** — the orchestrator thinks the reviewer is wrong: the issue isn't real, or the suggested fix is incorrect, or the reviewer misread the artifact. Goes into the disagreement list, surfaced to the user.
+2. **Override (confident)** — the orchestrator is certain the reviewer is wrong (verifiable misreading, factual error, fix that contradicts a locked design decision, etc.). The finding is dropped silently. The user is not pulled in.
+3. **Escalate (uncertain)** — the orchestrator suspects the reviewer is wrong but cannot fully verify, or the call genuinely depends on user judgment. The finding goes into the disagreement list, surfaced to the user via the Disagreement UX flow.
+
+Escalation is reserved for genuine orchestrator uncertainty. If the orchestrator can verify the reviewer's mistake by reading the artifact, the spec, or the locked decisions, it overrides confidently and moves on. The user's time is the scarce resource the orchestrator is protecting.
 
 After judgment, the orchestrator merges near-duplicate accepted findings:
 
 - Two accepted findings at the same `location` whose `suggested_fix` paragraphs describe the same intervention collapse to one entry. The merged entry takes the higher of the two severities and the more specific (or unioned) fix instruction.
 - The severity adjacency rule for "same location, slightly different severity": **H↔M** are mergeable; **M↔L** are mergeable; **H↔L** are not (treat as separate findings, judge each independently). This rule is non-transitive — M does not bridge H and L.
-- Conflicting fixes at the same location (one finding says "lock decision X", another says "defer decision X") cannot be merged. The orchestrator judges each finding independently — it may accept one and disagree with the other, or accept both as separate fix steps if they're complementary.
+- Conflicting fixes at the same location (one finding says "lock decision X", another says "defer decision X") cannot be merged. The orchestrator must pick one — accept one and override or escalate the other, or accept the spirit of both and rewrite the merged fix instruction in its own words to resolve the conflict before passing to the fixer. Two contradictory `suggested_fix` strings must never reach the fixer at the same location.
 
 The orchestrator makes the "real issue?" / "fix sound?" / "same intervention?" judgments in prose. There is no string-similarity threshold or other mechanical rule; this is a reading-comprehension task and Claude is the right tool for it.
 
@@ -161,11 +177,15 @@ For each disagreement, the orchestrator:
 4. Listens to the user's response in whatever form it comes — "yeah skip it", "no, the reviewer is right, fix it", "neither — do this instead", a paragraph of nuance.
 5. Restates what it heard before applying, so the user can correct.
 
-No fixed verdict vocabulary. The orchestrator interprets natural-language responses and either drops the finding (skip) or adds it to the fix list (with optional user-authored fix text overriding the reviewer's suggestion).
+No fixed verdict vocabulary. The orchestrator interprets natural-language responses and either drops the finding (skip) or adds it to the fix list.
 
-**Edge case (high orchestrator-disagreement rate):** if the orchestrator finds itself disagreeing with many reviewer findings in a single round, that's a signal the reviewer prompt or rubric may be miscalibrated. The orchestrator flags it: "I'm disagreeing with N reviewer findings this round, which is unusual. Want me to keep going, or pause and look at the reviewer prompts?" The threshold is the orchestrator's judgment, not a fixed number — what matters is the deviation from the run's normal cadence.
+**User-override fix text.** When the user resolves a disagreement with their own fix instruction ("don't do what the reviewer said — do this instead"), the orchestrator replaces the reviewer's `suggested_fix` field with the user's text and leaves the rest of the finding (severity, location, claim) intact. The fixer subagent receives the user-overridden finding identically to a reviewer-authored one — it has no awareness that the suggestion came from the user.
 
-**No silent defaults.** If the user's reply is ambiguous, the orchestrator asks again rather than guessing.
+**Disagreements are deduped before surfacing.** The orchestrator runs the same merge rules on the disagreement list as on the fix list (same location + compatible suggested_fix → collapse; H↔M and M↔L adjacent; severity = max). The user sees one entry per distinct issue, not two near-identical entries from each reviewer.
+
+**Edge case (high escalation rate):** if the orchestrator finds itself escalating many findings in a single round, that's a signal the reviewer prompt or rubric may be miscalibrated, *or* that the orchestrator is being too cautious about overriding. The orchestrator flags it: "I'm escalating N reviewer findings this round, which is unusual. Want me to keep going, or pause and look at the reviewer prompts?" The threshold is the orchestrator's judgment, not a fixed number — what matters is the deviation from the run's normal cadence.
+
+**No silent defaults.** If the user's reply is ambiguous, the orchestrator asks again rather than guessing. (Confident overrides without escalation are not "silent defaults" — they're explicit orchestrator decisions, distinct from guessing on user input.)
 
 ### Round-7 hard escalate
 
@@ -175,12 +195,18 @@ Rounds 1 through 7 are full review-judge-fix cycles. After round 7's fix complet
 
 The user can extend by N rounds, accept the current state, or take over.
 
+**Extension semantics.** If the user says "run more rounds," the orchestrator continues with **full review-judge-fix cycles** (rounds 1–7 semantics, not inventory-only). Round numbering continues sequentially (round 9, round 10, ...). After the user-specified extension count is exhausted, the orchestrator runs another inventory pass and presents the residual to the user again, just like the original round-8 inventory. The user may extend again, accept, or take over. There is no upper bound on extensions — the user is in charge.
+
 ### Failure modes
 
 - **Reviewer subagent crashes or times out** → retry once. If still failing, abort the loop and surface to the user with a clear error.
 - **Fixer subagent crashes or times out** → same.
-- **Fixer claims success but the artifact's content is unchanged** — verified via content hash (e.g., sha256) before and after dispatch. mtime is unreliable as a signal across filesystems and tools and is not used. Treat as a fix failure, retry once, abort if still failing.
-- **Intra-round fix conflicts** — when multiple findings touch overlapping content (e.g., two findings edit the same paragraph in incompatible ways), the fixer applies findings using its own judgment and returns the artifact in the best state it could achieve plus an explicit list of findings it was unable to apply cleanly. The orchestrator surfaces the skipped findings to the user as disagreements in the next round (since the fix didn't take, those findings will be re-raised by the reviewers anyway, but flagging them explicitly avoids silent partial application).
+- **Fixer claims success but the artifact's content is unchanged** — verified via content hash (e.g., sha256) before and after dispatch. mtime is unreliable as a signal across filesystems and tools and is not used.
+  - For prose artifacts (spec, plan): the hash is over the artifact file's full bytes.
+  - For code artifacts (impl): the hash is over `git diff <diff_base> -- <diff_paths>` output, captured before and after the fixer runs. This stays stable under unrelated git operations and changes only when the fixer actually mutates one of the in-scope files.
+  - Treat as a fix failure, retry once, abort if still failing.
+- **Intra-round fix conflicts → deferred findings.** When multiple accepted findings touch overlapping content (e.g., two findings edit the same paragraph in incompatible ways), the fixer applies what it can using its own judgment and returns the artifact in the best state it could achieve plus an explicit list of findings it was unable to apply — the **deferred findings** for this round. The orchestrator passes the deferred list to the next round so the next round's judgment step sees them alongside the new reviewer output. (The next round's reviewers will likely re-flag the underlying issues anyway since they remain in the artifact, but the explicit deferred-list path avoids silent partial application.) **This is the sole exception to the "all findings fixed each round" rule** — deferred findings are by definition findings the fixer could not apply, not findings the orchestrator chose to defer.
+- **Retries are sub-steps within a round.** A reviewer or fixer retry does not consume a round slot; the round counter only advances when the round completes (or returns clean / hard_escalate).
 
 ## Reviewer subagent
 
@@ -191,9 +217,9 @@ The user can extend by N rounds, accept the current state, or take over.
 - `stage`: `spec` | `plan` | `impl`
 - Path to the artifact under review.
 - Predecessor context — a structured value whose shape varies by stage:
-  - `spec` stage: a single path to a context file `<artifact_basename>.context.md` that the brainstorming skill writes alongside the spec before invoking burndown-reviews. Minimum content: the user's original request, the locked-in design decisions from the brainstorm, and any explicit non-goals.
+  - `spec` stage: a single path to a context file `<artifact_basename>.context.md` that the brainstorming skill writes alongside the spec before invoking burndown-reviews. Best-effort content: the user's original request, locked-in design decisions, and explicit non-goals — sections may be empty if the brainstorm didn't produce that material.
   - `plan` stage: a single path to the spec the plan was derived from.
-  - `impl` stage: an object `{ plan_path, diff_base, diff_paths }` where `plan_path` points to the implementation plan, `diff_base` is the git ref (commit SHA or branch name) recorded at the start of subagent-driven-development, and `diff_paths` is the explicit list of files the impl run is expected to have touched. The reviewer reads the diff between `diff_base` and `HEAD` restricted to `diff_paths`.
+  - `impl` stage: an object `{ plan_path, diff_base, diff_paths }` where `plan_path` points to the implementation plan, `diff_base` is a **commit SHA** (not a branch name) captured by `subagent-driven-development` at its very first step before any subagent dispatch, and `diff_paths` is the explicit list of files the impl run is expected to have touched. The reviewer reads the diff between `diff_base` and `HEAD` restricted to `diff_paths`. SDD passes the recorded SHA verbatim to burndown-reviews — by the time the burndown runs, the working tree may have advanced, but `diff_base` stays anchored to the pre-impl state.
 
 The reviewer subagent does not receive its own model name or round number — the orchestrator stamps those into finding IDs after receiving the reviewer's output (see Output format below).
 
@@ -230,11 +256,11 @@ The reviewer emits sequential numeric IDs (`1`, `2`, `3`, ...). The orchestrator
 
 **Location specifier rules:**
 
-- **Prose artifacts (spec, plan):** `<path> § "<section heading>"` — e.g., `spec.md § "Architecture"`. If the issue is sub-section, append a paragraph index: `spec.md § "Architecture" ¶3`.
+- **Prose artifacts (spec, plan):** `<path> § "<parent heading>" / "<section heading>"` — e.g., `spec.md § "Reviewer subagent" / "Inputs"`. Always include the parent section so headings that recur (e.g., "Inputs" appears under both Reviewer subagent and Fixer subagent) are unambiguous. If the issue is sub-section, append a paragraph index: `spec.md § "Architecture" / "The loop" ¶3`. For top-level sections, the parent path is just the section heading: `spec.md § "Architecture"`.
 - **Code artifacts (impl):** `<path>:L<start>-L<end>` — e.g., `src/loop.ts:L42-58`. Single-line issues: `src/loop.ts:L42`.
 - **Either is acceptable for impl-stage prose docs** (e.g., README updates).
 
-The reconcile orchestrator treats overlapping line ranges as the same location, and treats identical section headings as the same location. Paragraph indices distinguish issues within a section.
+The reconcile orchestrator treats overlapping line ranges as the same location, and treats identical section paths (parent + child) as the same location. Paragraph indices distinguish issues within a section.
 
 Empty list if clean. No preamble, no summary, no commentary outside findings.
 
@@ -277,7 +303,9 @@ The current checklist has these items:
 8. User reviews written spec
 9. Transition to implementation
 
-Insert burndown-reviews invocation between step 7 and step 8 as a new step "Burndown review pass". The existing self-review (step 7) stays — it's a quick inline check before kicking off the heavier subagent loop. Before step 6 (Write design doc), the brainstorming skill also writes the predecessor context file `<artifact_basename>.context.md` alongside the spec — this is what gets handed to burndown-reviews as the predecessor input.
+Insert burndown-reviews invocation between step 7 and step 8 as a new step "Burndown review pass". The existing self-review (step 7) stays — it's a quick inline check before kicking off the heavier subagent loop.
+
+**Predecessor context file.** As part of the new burndown step (between 7 and 8), and before the burndown-reviews invocation itself, the brainstorming skill writes `<artifact_basename>.context.md` alongside the spec. This file is a best-effort summary of state already in the orchestrator's hand at this point in the brainstorm: the user's original request, any locked-in design decisions captured during the conversation, and any explicit non-goals. Sections may be empty if the brainstorm did not produce that content — the brainstorming skill does not synthesize material that wasn't discussed. The file's purpose is to give downstream reviewers the same context the spec author had, no more.
 
 ### `writing-plans/SKILL.md`
 
@@ -318,8 +346,8 @@ Reviewer dispatch is always Opus + Sonnet concurrently, regardless of stage. Onl
 The orchestrator listens for these intents at the noted points:
 
 - **"Skip the burndown for this one"** — detected by the parent skill (brainstorming / writing-plans / subagent-driven-development) at the start of its run, before it begins producing the artifact. If detected, the parent skill skips the burndown invocation and goes straight to the user-review gate when the artifact is written.
-- **"Run more rounds"** — detected by burndown-reviews after a hard-escalate (round 8 inventory). The user specifies a number; the orchestrator continues from round 8 onward for that many additional rounds.
-- **Override the fixer model** — at any point during a run, the user can specify a different fixer model than the stage default ("use Opus as fixer this time" for spec/plan stages; "use Sonnet as fixer this time" for impl stage; or any of the supported models). Symmetric — the override works in either direction.
+- **"Run more rounds"** — detected by burndown-reviews after a hard-escalate (round 8 inventory). The user specifies a number; the orchestrator continues from round 9 onward for that many additional full review-judge-fix cycles.
+- **Override the fixer model** — detected by burndown-reviews at the start of round 1 and on each disagreement-pause; once set, the override persists for the remainder of the loop. The user can specify any supported model ("use Opus as fixer this time" for spec/plan stages; "use Sonnet as fixer this time" for impl stage). Symmetric — the override works in either direction.
 
 No env vars, no `settings.json` keys, no flags.
 
@@ -358,10 +386,12 @@ Reconcile and the loop run inside the skill's prose, not as a callable function 
 - Severity merge: H+M at same location → merged with severity H; M+L → merged with severity M; H+L → not merged, two separate findings.
 - Round-7 boundary: round 7 fix runs, then round 8 inventory pass runs reviewers without judging or dispatching the fixer.
 - Failure-mode tests:
-  - Reviewer subagent fails on first call → orchestrator retries once → succeeds → loop continues.
+  - Reviewer subagent fails on first call → orchestrator retries once (within the same round) → succeeds → loop continues.
   - Reviewer subagent fails twice → orchestrator aborts loop with clear error.
   - Fixer reports success but content hash unchanged → orchestrator retries once → second attempt's content hash unchanged → abort with clear error.
-  - Fixer reports skipped findings (intra-round conflicts) → those findings surface as disagreements in the next round.
+  - Fixer reports deferred findings (intra-round conflicts) → those findings join the next round's judgment step alongside fresh reviewer output.
+  - Extension after hard escalate: user requests N additional rounds → orchestrator runs full review-judge-fix cycles for rounds 9 through 8+N → another inventory pass at the end.
+  - Confident override: orchestrator drops a reviewer finding without escalation when it can verify the finding is wrong against the spec or locked decisions.
 
 ### Integration (real subagent dispatch, fixture artifacts; gated by default)
 
@@ -377,4 +407,3 @@ These are deliberately deferred to the implementation plan, not resolved here:
 
 1. **Exact step number for the burndown invocation in `writing-plans/SKILL.md` and `subagent-driven-development/SKILL.md`.** The location is fixed (immediately before the user-review/handoff step at the end of each skill), but the literal step number depends on the current state of those files at the time the implementation plan is written. The plan should record the chosen number explicitly.
 2. **Test harness specifics.** Fixture format, the orchestrator-simulation harness, and the gating mechanism for integration tests should match the conventions already in `tests/` — needs a read of that directory before the plan is written.
-3. **Brainstorming context-file production point.** The brainstorming skill writes `<artifact_basename>.context.md` alongside the spec, but the exact step where that write happens (before step 6 "Write design doc"? as a sub-step? immediately before the burndown invocation?) is left to the plan to choose so it composes cleanly with the existing checklist.

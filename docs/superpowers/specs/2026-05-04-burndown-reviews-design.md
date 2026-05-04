@@ -262,6 +262,47 @@ The user can extend by N rounds, accept the current state, or take over.
 
 **Extension semantics.** If the user says "run more rounds," the orchestrator continues with **full review-judge-fix cycles** (rounds 1–7 semantics, not inventory-only). Round numbering continues sequentially (round 9, round 10, ...). The extension starts a fresh inner-loop invocation with `deferred_findings = []`, `abort_error = None`, and the non-progress trackers (`prev_artifact_hash`, `prev_deferred_id_set`) reset, so prior-loop state doesn't contaminate the extension. After the user-specified extension count is exhausted, the orchestrator runs another inventory pass — **identical mechanics to round 8: both reviewers concurrently, no judgment, no fixer dispatch**. The post-extension inventory pass stamps findings with the **actual round number** (e.g., `opus-r18-{n}` for an inventory after 10 extension rounds concluding at round 18), not the literal `r8` label. The user may extend again, accept, or take over. There is no upper bound on extensions — the user is in charge.
 
+### Trajectory report
+
+Whenever the loop terminates — clean exit, hard escalate, fatal abort, or the end of a post-extension inventory pass — the orchestrator emits a **burndown trajectory table** summarizing the run. The table is shown as part of the final user-facing surface: alongside the user-review hand-off on a clean exit, alongside the residual list on a hard escalate, alongside the abort error on a fatal abort.
+
+**Columns:**
+
+- **Round** — the round number (1–7 for the main loop, 8 for the inventory pass, then the actual extension round numbers if extensions ran).
+- **Findings** — total findings produced by the reviewers that round (Opus + Sonnet, before any orchestrator judgment).
+- **H / M / L / nit** — severity breakdown of those findings.
+- **Applied** — count of findings the orchestrator accepted (and that the fixer applied) this round, post-merge-deduplication.
+- **Override** — count of findings the orchestrator confidently dropped without escalating.
+- **Escalated (kept/skipped)** — count of findings the orchestrator surfaced to the user as disagreements, with a sub-count of how many the user kept (added back into the fix list) versus skipped.
+- **Deferred** — count of findings the fixer was unable to apply this round (intra-round conflicts), carried into next round's judgment.
+
+A final **Σ totals** row sums each column.
+
+**Format:** markdown table, terminal-readable. Round-8 inventory rows omit the Applied / Override / Escalated / Deferred columns (round 8 doesn't judge or fix) and just show what the inventory found, with carried-deferred entries counted under their original round of origin in the relevant column.
+
+**Example** (illustrative — drawn from this spec's own dogfooding run):
+
+```
+| Round | Findings | H | M | L | nit | Applied | Override | Escalated (k/s) | Deferred |
+|-------|----------|---|---|---|-----|---------|----------|-----------------|----------|
+| 1     | 30       | 6 | 15| 6 | 3   | 30      | 0        | 0 (–/–)         | 0        |
+| 2     | 17       | 0 | 9 | 7 | 1   | 16      | 1        | 0 (–/–)         | 0        |
+| 3     | 16       | 0 | 7 | 6 | 3   | 16      | 0        | 0 (–/–)         | 0        |
+| 4     | 7        | 0 | 1 | 5 | 1   | 7       | 0        | 0 (–/–)         | 0        |
+| 5     | 6        | 0 | 4 | 2 | 0   | 6       | 0        | 0 (–/–)         | 0        |
+| 6     | 5        | 0 | 3 | 2 | 0   | 5       | 0        | 0 (–/–)         | 0        |
+| 7     | 4        | 0 | 2 | 2 | 0   | 4       | 0        | 0 (–/–)         | 0        |
+| 8 (i) | 23       | 0 | 14| 9 | 0   | —       | —        | —               | —        |
+| 9     | 23       | 0 | 14| 9 | 0   | 22      | 1        | 0 (–/–)         | 0        |
+| 10    | 4        | 0 | 3 | 1 | 0   | 4       | 0        | 0 (–/–)         | 0        |
+| 11    | 0        | 0 | 0 | 0 | 0   | —       | —        | —               | 0        |
+| Σ     | 135      | 6 | 72| 49| 8   | 110     | 2        | 0               | 0        |
+```
+
+The "8 (i)" row indicates the inventory pass: the table shows what reviewers surfaced; the Applied/Override/Escalated/Deferred columns are blank because round 8 doesn't judge or fix. Round 9 then re-shows the same finding count when the orchestrator processes the round-8 residual as the round-9 input (extension-mode treats round 8's residual as fresh review output).
+
+**Why this lives in the spec rather than a separate logging concern:** the table is part of the loop's user-facing surface — the user reads it to decide whether to accept the artifact, extend, or take over. It's not telemetry; it's a final-step deliverable.
+
 ### Failure modes
 
 - **Reviewer subagent crashes or times out** → retry once. If still failing, abort the loop and surface to the user with a clear error.
@@ -474,6 +515,7 @@ Reconcile and the loop run inside the skill's prose, not as a callable function 
   - ID-survival merge: a deferred finding `opus-r2-3` and a fresh finding `sonnet-r3-1` at the same location with compatible fixes → merged entry retains the older `opus-r2-3` ID.
   - Non-progress short-circuit: two consecutive rounds produce identical artifact hash + identical deferred-ID set → loop breaks out early; round 8 inventory still runs.
   - Fixer-abort with round 8: round-7 fixer aborts → loop exits → round 8 still dispatches reviewers → user sees abort error alongside residual list.
+  - Trajectory report: at every loop termination (clean / hard_escalate / fatal_abort / end-of-extension), the orchestrator emits a markdown trajectory table with per-round Findings / H / M / L / nit / Applied / Override / Escalated (kept/skipped) / Deferred columns and a Σ totals row. Round-8 inventory rows show only Findings + severity breakdown (no judge/fix columns).
 
 ### Integration (real subagent dispatch, fixture artifacts; gated by default)
 

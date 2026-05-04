@@ -1,5 +1,21 @@
 # Superpowers Release Notes
 
+## v5.0.7+btc.1 (2026-05-04) — Fork divergence
+
+This is a fork release on `btc/superpowers`, layered on top of upstream v5.0.7. Build-metadata suffix `+btc.1` keeps the fork from sorting below upstream in semver comparisons.
+
+### Burndown Reviews
+
+A new skill `burndown-reviews` runs at the spec, plan, and impl checkpoints (between artifact write and the existing user-review gate). Two reviewer subagents (Opus + Sonnet) review concurrently per round; the orchestrator judges each finding and applies a fixer subagent to the accepted set. Up to 7 rounds, then a round-8 reviewer-only inventory pass on hard-escalate. The user is only pulled in when the orchestrator can't confidently override or accept a reviewer's finding.
+
+- New skill: `skills/burndown-reviews/SKILL.md`
+- New agents: `agents/burndown-reviewer.md`, `agents/burndown-fixer.md`
+- Integration: `brainstorming`, `writing-plans`, `subagent-driven-development` each gain a burndown-review pass before their user-review step.
+- Voice tunables: "skip the burndown for this one" (parent skill detects), "run more rounds" (after hard-escalate), fixer-model override (mid-loop, last-write wins).
+- Trajectory report emitted at every loop termination.
+
+Spec: `docs/superpowers/specs/2026-05-04-burndown-reviews-design.md`. Plan: `docs/superpowers/plans/2026-05-04-burndown-reviews.md`.
+
 ## v5.0.7 (2026-03-31)
 
 ### GitHub Copilot CLI Support

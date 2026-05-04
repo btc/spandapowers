@@ -487,7 +487,7 @@ No env vars, no `settings.json` keys, no flags.
 │   └── burndown-fixer.md               # NEW
 ├── tests/burndown-reviews/             # NEW
 ├── package.json                        # version bumped (see Fork & Install)
-└── CHANGELOG.md                        # fork divergence entry
+└── CHANGELOG.md                        # fork divergence entry (actual file: RELEASE-NOTES.md)
 
 ~/Projects/src/claude-plugins/          (separate marketplace repo, GH: btc/claude-plugins)
 └── .claude-plugin/marketplace.json     # points superpowers at btc/superpowers

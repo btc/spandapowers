@@ -128,9 +128,10 @@ for round in 1..7:
   # "opus-r2-3" when re-judged in round 3) so traceability is preserved
 
 # Round 8 — inventory pass: reviewers only, no judging, no fixer.
-# Round 8 ALWAYS runs if the loop reaches round 7's fixer dispatch.
-# (The dispatch itself does not short-circuit the pass; the pass's RESULT
-# determines whether we return "clean" or "hard_escalate".)
+# Round 8 runs whenever the for-loop completes without an early `return "clean"`
+# AND round 7's fixer dispatch exited without a fatal abort. (The dispatch itself
+# does not short-circuit the pass; the pass's RESULT determines whether we
+# return "clean" or "hard_escalate".)
 final_opus, final_sonnet = parallel(
   reviewer(model=opus,   artifact, predecessor, stage),
   reviewer(model=sonnet, artifact, predecessor, stage),
@@ -197,7 +198,7 @@ No fixed verdict vocabulary. The orchestrator interprets natural-language respon
 
 ### Round-7 hard escalate
 
-Rounds 1 through 7 are full review-judge-fix cycles. After round 7's fix completes, the orchestrator runs **round 8 as a reviewer-only inventory pass** — dispatch both reviewers concurrently, do not judge, do not fix. The combined residual finding list goes straight to the user:
+Rounds 1 through 7 are full review-judge-fix cycles. After round 7's fixer dispatch exits without a fatal abort (success, partial-with-deferrals, or unchanged-content-with-deferrals all qualify), the orchestrator runs **round 8 as a reviewer-only inventory pass** — dispatch both reviewers concurrently, do not judge, do not fix. (A round-7 fixer that hits the abort path per the failure-mode rules — e.g., crashes twice or produces an unfixable empty-diff failure — skips round 8 and surfaces the abort error directly to the user.) The combined residual finding list goes straight to the user:
 
 > "7 rounds didn't converge. Here's what's still flagged. Accept as-is, run more rounds, or fix manually?"
 
@@ -212,8 +213,10 @@ The user can extend by N rounds, accept the current state, or take over.
 - **Fixer claims success but the artifact's content is unchanged** — verified via content hash (e.g., sha256) before and after dispatch. mtime is unreliable as a signal across filesystems and tools and is not used.
   - For prose artifacts (spec, plan): the hash is over the artifact file's full bytes.
   - For code artifacts (impl): the hash is over the **concatenated full contents of the files in `diff_paths`** (sorted by path), not over git-diff output. This catches reverts-to-base (which would produce an empty diff before and after) and avoids false positives from unrelated git operations.
-  - **Unchanged content + non-empty deferred list = legitimate** (the fixer determined it could apply none of the findings cleanly; that's the intended use of the deferred-findings exit). **Unchanged content + empty deferred list + non-empty fix list = failure.** In the failure case, retry once, abort if still failing.
+  - **Unchanged content + non-empty deferred list = legitimate** (the fixer determined it could apply none of the findings cleanly; that's the intended use of the deferred-findings exit). The orchestrator **does not retry** in this case — it advances directly to round N+1 with the deferred findings carried into the next round's judgment step. **Unchanged content + empty deferred list + non-empty fix list = failure.** In the failure case, retry once, abort if still failing.
+  - **New files** (impl stage): if the fixer creates a new file outside `diff_paths` to address a finding (e.g., a missing test file), the fixer reports the new path explicitly. The orchestrator extends `diff_paths` to include it before the next round, which both expands the hash domain and gives next round's reviewers visibility into the new file. The first round in which a new file appears is exempt from the unchanged-content failure check, since the hash domain changed by design.
 - **Intra-round fix conflicts → deferred findings.** When multiple accepted findings touch overlapping content (e.g., two findings edit the same paragraph in incompatible ways), the fixer applies what it can using its own judgment and returns the artifact in the best state it could achieve plus an explicit list of findings it was unable to apply — the **deferred findings** for this round. The orchestrator passes the deferred list to the next round so the next round's judgment step sees them alongside the new reviewer output. Deferred findings retain their original IDs (a finding stamped `opus-r2-3` keeps that ID when judged again in round 3). **This is the sole exception to the "all findings fixed each round" rule** — deferred findings are by definition findings the fixer could not apply, not findings the orchestrator chose to defer. User-resolved "keep" findings (escalated disagreements the user said to apply) enter the fix list and are subject to the same deferral rules as reviewer findings; user-resolved "skip" findings are dropped from this round and not re-reviewed (reviewers may re-flag them next round per the statelessness caveat).
+- **Override of a previously-deferred finding.** When a deferred finding from a prior round is judged again in the current round and the orchestrator picks the **override** verdict (rather than accept or escalate), the finding is dropped silently with the same semantics as overriding a fresh reviewer finding. The ID is retired. This is intentional: the deferred-list mechanism preserves traceability, but the orchestrator retains full authority to decide a previously-deferred issue is no longer worth pursuing.
 - **Retries are sub-steps within a round.** A reviewer or fixer retry does not consume a round slot; the round counter only advances when the round completes (or returns clean / hard_escalate).
 
 ## Reviewer subagent
@@ -264,11 +267,11 @@ The reviewer emits sequential numeric IDs (`1`, `2`, `3`, ...). The orchestrator
 
 **Location specifier rules:**
 
-- **Prose artifacts (spec, plan):** `<path> § "<parent heading>" / "<section heading>"` — e.g., `spec.md § "Reviewer subagent" / "Inputs"`. Always include the parent section so headings that recur (e.g., "Inputs" appears under both Reviewer subagent and Fixer subagent) are unambiguous. If the issue is sub-section, append a paragraph index: `spec.md § "Architecture" / "The loop" ¶3`. For top-level sections, the parent path is just the section heading: `spec.md § "Architecture"`.
+- **Prose artifacts (spec, plan):** `<path> § "<H2>" / "<H3>" / ...` — the **full heading chain** from the H2 down to the section containing the issue. Examples: `spec.md § "Architecture" / "Failure modes"` (two-level), `spec.md § "Reviewer subagent" / "Inputs"` (two-level), `spec.md § "Architecture" / "The loop" ¶3` (two-level + paragraph index). Top-level sections use a single heading: `spec.md § "Architecture"`. The chain disambiguates section names that recur under different parents.
 - **Code artifacts (impl):** `<path>:L<start>-L<end>` — e.g., `src/loop.ts:L42-58`. Single-line issues: `src/loop.ts:L42`.
 - **Either is acceptable for impl-stage prose docs** (e.g., README updates).
 
-The reconcile orchestrator treats overlapping line ranges as the same location, and treats identical section paths (parent + child) as the same location. Paragraph indices distinguish issues within a section.
+The reconcile orchestrator treats overlapping line ranges as the same location, and treats identical full heading chains as the same location. Paragraph indices distinguish issues within a section.
 
 Empty list if clean. No preamble, no summary, no commentary outside findings.
 
@@ -356,7 +359,7 @@ The orchestrator listens for these intents at the noted points:
 
 - **"Skip the burndown for this one"** — detected by the parent skill (brainstorming / writing-plans / subagent-driven-development) at the start of its run, before it begins producing the artifact. If detected, the parent skill skips the burndown invocation and goes straight to the user-review gate when the artifact is written.
 - **"Run more rounds"** — detected by burndown-reviews after a hard-escalate (round 8 inventory). The user specifies a number; the orchestrator continues from round 9 onward for that many additional full review-judge-fix cycles.
-- **Override the fixer model** — detected by burndown-reviews at the start of round 1 and on each disagreement-pause. **Last-write semantics**: the most recently stated override applies to all subsequent rounds; the user may change their mind mid-loop and the new value takes effect immediately. The user can specify any supported model ("use Opus as fixer this time" for spec/plan stages; "use Sonnet as fixer this time" for impl stage). Symmetric — the override works in either direction.
+- **Override the fixer model** — detected by burndown-reviews at the start of round 1, on each disagreement-pause, and during the round-8 hard-escalate user exchange (so the user can re-tune mid-extension without restarting). **Last-write semantics**: the most recently stated override applies to all subsequent rounds; the user may change their mind mid-loop and the new value takes effect immediately. The user can specify any supported model ("use Opus as fixer this time" for spec/plan stages; "use Sonnet as fixer this time" for impl stage). Symmetric — the override works in either direction.
 
 No env vars, no `settings.json` keys, no flags.
 

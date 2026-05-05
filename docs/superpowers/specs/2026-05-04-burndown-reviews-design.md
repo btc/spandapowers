@@ -34,7 +34,7 @@ This spec does not cover:
 
 - Fork `obra/superpowers` to `btc/superpowers` (public).
 - Local clone at `~/Projects/src/superpowers`. `origin` → `btc/superpowers`, `upstream` → `obra/superpowers`.
-- Customizations land on a `burndown-reviews` branch. `main` tracks upstream cleanly so rebases stay tractable.
+- Customizations land on `main` directly. The fork's `main` = upstream's `main` + customization commits, kept linear via rebase. (Earlier drafts of this spec used a `burndown-reviews` topic branch; that's been collapsed into `main` so the marketplace's default-branch lookup works without pinning.)
 - Bump `package.json` version to `<upstream-version>+btc.<N>`, where `<upstream-version>` is whatever the latest rebased upstream version is and `<N>` increments per fork release. The `+btc.<N>` suffix is **semver build metadata** — it identifies the fork unambiguously without affecting semver precedence (build metadata is ignored when comparing versions, so the fork is not seen as "older" than upstream). At the time this spec is being written, upstream is at `5.0.7`, so the first fork release is `5.0.7+btc.1`. After a future upstream rebase to `5.1.0`, the first fork release on that base is `5.1.0+btc.1`.
 
 ### Marketplace repo
@@ -55,8 +55,14 @@ The `btc-plugins` name is what the marketplace.json declares; the GitHub repo na
 
 When `obra/superpowers` releases a new version:
 
-1. On `main`: `git fetch upstream && git rebase upstream/main && git push --force-with-lease origin main`.
-2. On `burndown-reviews`: `git rebase main`. Conflicts mostly land in the three edited skill files; the new files (`burndown-reviews/`, `burndown-reviewer.md`, `burndown-fixer.md`) are independent and don't conflict.
+```fish
+git fetch upstream
+git checkout main
+git rebase upstream/main          # replays customization commits on top of new upstream
+git push --force-with-lease origin main
+```
+
+Conflicts mostly land in the three edited skill files (`brainstorming`, `writing-plans`, `subagent-driven-development`) since those are localized inserts into upstream-evolved content. The new files (`skills/burndown-reviews/`, `agents/burndown-reviewer.md`, `agents/burndown-fixer.md`, fixtures) are independent and don't conflict.
 
 Rebase is preferred over merge: it keeps the divergence visible as a clean linear set of customization commits on top of upstream.
 
@@ -475,7 +481,7 @@ No env vars, no `settings.json` keys, no flags.
 ## File layout in the fork
 
 ```
-~/Projects/src/superpowers/   (fork on burndown-reviews branch)
+~/Projects/src/superpowers/   (fork on main branch)
 ├── skills/
 │   ├── brainstorming/SKILL.md          # edited (insert burndown invocation)
 │   ├── writing-plans/SKILL.md          # edited (insert burndown invocation)

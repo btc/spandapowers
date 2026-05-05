@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-05-04-burndown-reviews-design.md`
 
-**Branch:** `burndown-reviews` on `btc/superpowers` fork (already created).
+**Branch:** `main` on `btc/superpowers` fork. (Implementation initially landed on a `burndown-reviews` topic branch and was fast-forwarded into `main` after Task 13. Subsequent rebases against upstream happen directly on `main`.)
 
 **Test convention adaptation:** The spec's "orchestrator-simulation tests" idea (open question 2) is adapted here to the codebase's actual test framework: bash scripts that drive `claude -p` against fixture inputs. The orchestrator-simulation test target would require a mock-subagent framework that does not exist in this codebase; building one is out of scope. Instead: one skill-triggering test (cheap, automated) + manual-verification procedures for end-to-end runs (gated, runnable on-demand).
 
@@ -887,11 +887,19 @@ git commit -m "RELEASE-NOTES: v5.0.7+btc.1 fork divergence entry; fix spec File 
 
 ### Task 11: Push the branch
 
-- [ ] **Step 1: Push burndown-reviews branch to origin**
+- [ ] **Step 1: Push to origin**
 
-Run: `git push -u origin burndown-reviews`
+If the implementation has been done on a topic branch (e.g., `burndown-reviews`), fast-forward `main` to it first:
 
-The `-u` flag sets upstream tracking on first push and is a no-op afterwards. Expected: branch updated on `btc/superpowers` GitHub remote. If the push is rejected due to remote divergence, abort and surface the issue — do not force-push without explicit user consent.
+```fish
+git checkout main
+git merge --ff-only burndown-reviews
+git push -u origin main
+```
+
+If the implementation went directly on `main`, just `git push -u origin main`.
+
+The `-u` flag sets upstream tracking on first push and is a no-op afterwards. Expected: branch updated on `btc/superpowers` GitHub remote. If the push is rejected due to remote divergence, abort and surface the issue — do not force-push without explicit user consent. (Force-with-lease is acceptable during periodic upstream rebases — see Sync workflow in the spec.)
 
 ---
 
@@ -936,7 +944,7 @@ If you currently have upstream superpowers installed, uninstall it first:
 
 ## Source
 
-The fork lives at https://github.com/btc/superpowers (branch `burndown-reviews`).
+The fork lives at https://github.com/btc/superpowers (branch `main`).
 ```
 
 - [ ] **Step 3: Write the marketplace.json**

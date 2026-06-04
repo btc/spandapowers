@@ -23,4 +23,6 @@ Task tool (spandapowers:code-reviewer):
 - Is the implementation following the file structure from the plan?
 - Did this implementation create new files that are already large, or significantly grow existing files? (Don't flag pre-existing file sizes — focus on what this change contributed.)
 
+**Escalation:** this is a Family II review leaf that reuses `requesting-code-review/code-reviewer.md`, so it inherits that template's "Escalating a Complex Review" guidance automatically. Escalate to a multi-model review Workflow only on a high-blast-radius / large diff or a reviewer low-confidence signal — never on a `BLOCKED` return (reviewers don't emit one), and not by default. See spandapowers:escalating-to-workflows.
+
 **Code reviewer returns:** Strengths, Issues (Critical/Important/Minor), Assessment

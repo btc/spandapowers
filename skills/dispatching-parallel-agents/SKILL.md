@@ -109,6 +109,8 @@ Do NOT just increase timeouts - find the real issue.
 Return: Summary of what you found and what you fixed.
 ```
 
+**Escalating a stubborn domain (per-leaf, not the fan-out):** the parallel fan-out itself stays a composition node — leave it. But an *individual* per-domain fixer leaf is a Family I leaf that may be escalated to a dynamic Workflow when it can't find the root cause: single-agent first, and on can't-find-root-cause / repeated failures (the suite still failing after the single-agent fix attempt — this fixer has no dedicated retry counter, so it uses the "after the first failed self-test" default), re-dispatch the **same** domain as `systematic-debug → fix → verify`, emitting the same root-cause + changes summary. See spandapowers:escalating-to-workflows.
+
 ## Common Mistakes
 
 **❌ Too broad:** "Fix all the tests" - agent gets lost

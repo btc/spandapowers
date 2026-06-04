@@ -107,6 +107,12 @@ git diff {BASE_SHA}..{HEAD_SHA}
 - Be vague ("improve error handling")
 - Avoid giving a clear verdict
 
+## Escalating a Complex Review
+
+This reviewer is a **Family II (discretionary review-gated) leaf** (see spandapowers:escalating-to-workflows). It emits a verdict, not a pass/fail self-test, so it does **not** use a `BLOCKED` return. Escalate this single-reviewer dispatch to a dynamic Workflow only when the diff is high-blast-radius / large (orchestrator complexity judgment) **or** a single reviewer returns a low-confidence / can't-reconcile signal — not by default.
+
+On escalation: run `parallel()` multi-model reviewers (**Opus + Sonnet** — a deliberate review-diversity carve-out, the only non-Opus model permitted here) over the same `BASE_SHA..HEAD_SHA` range → judge/reconcile → emit **one merged** severity-categorized verdict in exactly the Output Format above (the single-agent shape). See spandapowers:escalating-to-workflows for the gate and the shaping-agent contract.
+
 ## Example Output
 
 ```

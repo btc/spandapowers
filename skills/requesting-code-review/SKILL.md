@@ -40,6 +40,8 @@ Use Task tool with spandapowers:code-reviewer type, fill template at `code-revie
 - `{HEAD_SHA}` - Ending commit
 - `{DESCRIPTION}` - Brief summary
 
+**Complex diffs:** this single-reviewer dispatch is a Family II leaf. For a high-blast-radius / large diff, or when a single reviewer returns low confidence, escalate it to a multi-model review Workflow instead — see spandapowers:escalating-to-workflows and the "Escalating a Complex Review" section of `code-reviewer.md`. Single-reviewer is the default.
+
 **3. Act on feedback:**
 - Fix Critical issues immediately
 - Fix Important issues before proceeding

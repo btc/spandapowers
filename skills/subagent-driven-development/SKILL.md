@@ -267,6 +267,10 @@ Done!
 - Dispatch fix subagent with specific instructions
 - Don't try to fix manually (context pollution)
 
+## Final Review Escalation
+
+The final whole-implementation code review (dispatched once after all per-task loops) is the highest-blast-radius review point in SDD. It is a Family II review leaf: escalate it to a dynamic Workflow on a large whole-branch diff (orchestrator complexity judgment) or a reviewer low-confidence / can't-reconcile signal — not a `BLOCKED` return, and not by default. On escalation: a multi-model panel (**Opus + Sonnet** — review-diversity carve-out) plus a loop-until-dry enumeration sweep over the whole-branch diff → judge → one consolidated Strengths / Issues / Assessment report (the single-agent shape). See spandapowers:escalating-to-workflows.
+
 ## Burndown Review Pass
 
 After all per-task implementer/reviewer loops complete and tests pass, and before invoking `finishing-a-development-branch`:

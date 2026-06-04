@@ -74,7 +74,7 @@ digraph process {
     "More tasks remain?" [shape=diamond];
     "Dispatch final code reviewer subagent for entire implementation" [shape=box];
     "Burndown review pass" [shape=box];
-    "Use superpowers:finishing-a-development-branch" [shape=box style=filled fillcolor=lightgreen];
+    "Use spandapowers:finishing-a-development-branch" [shape=box style=filled fillcolor=lightgreen];
 
     "Read plan, extract all tasks with full text, note context, create TodoWrite" -> "Dispatch implementer subagent (./implementer-prompt.md)";
     "Dispatch implementer subagent (./implementer-prompt.md)" -> "Implementer subagent asks questions?";
@@ -94,7 +94,7 @@ digraph process {
     "More tasks remain?" -> "Dispatch implementer subagent (./implementer-prompt.md)" [label="yes"];
     "More tasks remain?" -> "Dispatch final code reviewer subagent for entire implementation" [label="no"];
     "Dispatch final code reviewer subagent for entire implementation" -> "Burndown review pass";
-    "Burndown review pass" -> "Use superpowers:finishing-a-development-branch";
+    "Burndown review pass" -> "Use spandapowers:finishing-a-development-branch";
 }
 ```
 
@@ -291,13 +291,13 @@ Otherwise invoke the `burndown-reviews` skill with `stage=impl`, `artifact_path=
 ## Integration
 
 **Required workflow skills:**
-- **superpowers:using-git-worktrees** - REQUIRED: Set up isolated workspace before starting
-- **superpowers:writing-plans** - Creates the plan this skill executes
-- **superpowers:requesting-code-review** - Code review template for reviewer subagents
-- **superpowers:finishing-a-development-branch** - Complete development after all tasks
+- **spandapowers:using-git-worktrees** - REQUIRED: Set up isolated workspace before starting
+- **spandapowers:writing-plans** - Creates the plan this skill executes
+- **spandapowers:requesting-code-review** - Code review template for reviewer subagents
+- **spandapowers:finishing-a-development-branch** - Complete development after all tasks
 
 **Subagents should use:**
-- **superpowers:test-driven-development** - Subagents follow TDD for each task
+- **spandapowers:test-driven-development** - Subagents follow TDD for each task
 
 **Alternative workflow:**
-- **superpowers:executing-plans** - Use for parallel session instead of same-session execution
+- **spandapowers:executing-plans** - Use for parallel session instead of same-session execution

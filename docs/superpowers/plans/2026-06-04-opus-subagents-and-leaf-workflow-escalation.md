@@ -116,7 +116,25 @@ git commit -m "feat: add escalating-to-workflows skill"
 
 - [ ] **Step 1: Replace the Model Selection section**
 
-Replace lines 101–114 (the `## Model Selection` heading through the "Task complexity signals" list) with:
+Replace lines 101–114 — the full current `## Model Selection` section. Quote the exact current text to match (consistent with Tasks 3/5/6):
+
+```markdown
+## Model Selection
+
+Use the least powerful model that can handle each role to conserve cost and increase speed.
+
+**Mechanical implementation tasks** (isolated functions, clear specs, 1-2 files): use a fast, cheap model. Most implementation tasks are mechanical when the plan is well-specified.
+
+**Integration and judgment tasks** (multi-file coordination, pattern matching, debugging): use a standard model.
+
+**Architecture, design, and review tasks**: use the most capable available model.
+
+**Task complexity signals:**
+- Touches 1-2 files with a complete spec → cheap model
+- Touches multiple files with integration concerns → standard model
+- Requires design judgment or broad codebase understanding → most capable model
+```
+with:
 
 ```markdown
 ## Model Selection
@@ -125,6 +143,7 @@ All SDD subagents run **Opus** — the implementer, the spec-compliance reviewer
 
 When a leaf is genuinely complex, the lever is not a bigger model (there isn't one) — it is escalating that leaf to a dynamic Workflow. See spandapowers:escalating-to-workflows.
 ```
+(If the quoted current text differs in wording from what's on disk, match on structure — the `## Model Selection` heading, the "least powerful model" paragraph, the three role bullets, and the "Task complexity signals" line — and replace the whole block.)
 
 - [ ] **Step 2: Verify the tiering text is gone and Opus text is present**
 
@@ -184,15 +203,30 @@ with:
 **DONE_WITH_CONCERNS:** The implementer completed the work but flagged doubts. Read the concerns before proceeding. If the concerns are about correctness or scope, address them before review. If they're observations (e.g., "this file is getting large"), note them and proceed to review. If the doubts are substantive — or the implementer signalled it couldn't decide among multiple viable approaches — that is an empirical escalation entry point for the #1 implementer leaf: re-dispatch the **same** task as a dynamic Workflow (see spandapowers:escalating-to-workflows). DONE_WITH_CONCERNS and can't-decide are additional empirical entry points wired here at the implementer leaf — distinct from the BLOCKED rung above; do not fold them into BLOCKED handling.
 ```
 
-- [ ] **Step 3: Verify**
+- [ ] **Step 3: Reword the "force the same model to retry" line**
+
+The "**Never**" line (current line 132) reads oddly now that Model Selection asserts a single model. Replace:
+
+```markdown
+**Never** ignore an escalation or force the same model to retry without changes. If the implementer said it's stuck, something needs to change.
+```
+with:
+```markdown
+**Never** ignore an escalation or force a retry without changes. If the implementer said it's stuck, something needs to change.
+```
+
+- [ ] **Step 4: Verify**
 
 Run: `grep -nE "more capable model" skills/subagent-driven-development/SKILL.md`
 Expected: no matches (exit code 1) — the dead rung is gone.
 
-Run: `grep -c "escalating-to-workflows" skills/subagent-driven-development/SKILL.md`
-Expected: `≥3` (Model Selection from Task 2, plus the two rungs here).
+Run: `grep -nE "force the same model to retry" skills/subagent-driven-development/SKILL.md`
+Expected: no matches (exit code 1) — the reworded line no longer says "the same model".
 
-- [ ] **Step 4: Commit**
+Run: `[ "$(grep -c "escalating-to-workflows" skills/subagent-driven-development/SKILL.md)" -ge 3 ] && echo OK || echo FAIL`
+Expected: `OK` (threshold only — Model Selection plus the Task-3 escalation rungs; exact count is higher and grows in Task 10. The threshold guards against under-application, not exact provenance.)
+
+- [ ] **Step 5: Commit**
 
 ```bash
 git add skills/subagent-driven-development/SKILL.md
@@ -285,21 +319,26 @@ The loop steps below are labeled to match the spec pseudocode's letters (A throu
 
 - [ ] **Step 4: Step A reviewer-pair carve-out note (line 45)**
 
-Append a carve-out note to the end of the step-A bullet (after "...into `all_findings`."). Add this sentence:
+The step-A bullet ends with the unique phrase `(which retain their older IDs) into \`all_findings\`.`. Replace:
 ```markdown
- (**Deliberate carve-out — do not "consistency-fix":** the `opus`+`sonnet` pairing is intentional cross-*model* review diversity, the entire reason the pair exists. This is the only reviewer-pair Sonnet usage and it stays.)
+concatenates them with the prior round's `deferred_findings` (which retain their older IDs) into `all_findings`.
+```
+with:
+```markdown
+concatenates them with the prior round's `deferred_findings` (which retain their older IDs) into `all_findings`. (**Deliberate carve-out — do not "consistency-fix":** the `opus`+`sonnet` pairing is intentional cross-*model* review diversity, the entire reason the pair exists. This is the only reviewer-pair Sonnet usage and it stays.)
 ```
 
 - [ ] **Step 5: Step D (line 58)**
 
-Replace the opening of the step-D bullet:
+Replace the **complete** line-58 step-D bullet (quote the whole line; it has three trailing clauses after "batched per round." that must survive verbatim):
 ```markdown
-4. **(D) Pause if any escalated disagreements remain** — re-check the fixer-model voice override at this pause. Surface disagreements to the user in plain language, batched per round.
+4. **(D) Pause if any escalated disagreements remain** — re-check the fixer-model voice override at this pause. Surface disagreements to the user in plain language, batched per round. Use the Disagreement UX from the spec (state finding, explain disagreement, offer recommendation, listen, restate). Block until the user finishes resolving every escalated item. Add user-resolved "keep" findings to `fix_list` (with the user's text replacing the reviewer's `suggested_fix` if they wrote one).
 ```
-with (override re-check removed, disagreement-pause logic preserved):
+with (override re-check removed, every other clause preserved verbatim):
 ```markdown
-4. **(D) Pause if any escalated disagreements remain** — surface disagreements to the user in plain language, batched per round.
+4. **(D) Pause if any escalated disagreements remain** — surface disagreements to the user in plain language, batched per round. Use the Disagreement UX from the spec (state finding, explain disagreement, offer recommendation, listen, restate). Block until the user finishes resolving every escalated item. Add user-resolved "keep" findings to `fix_list` (with the user's text replacing the reviewer's `suggested_fix` if they wrote one).
 ```
+**Note:** preserve every clause after "batched per round." verbatim; remove ONLY the fixer-model-override re-check clause (the leading "re-check the fixer-model voice override at this pause. ").
 
 - [ ] **Step 6: Step F (line 60)**
 
@@ -326,7 +365,7 @@ Run: `grep -niE "voice override|overridable|go cheaper|use sonnet for fixer|swit
 Expected: no matches (exit code 1).
 
 Run: `grep -c 'model="sonnet"' skills/burndown-reviews/SKILL.md`
-Expected: `≥1` (the reviewer pair in step A — and the round-8 inventory pass, which says "same inputs as in step A" — preserved).
+Expected: `1` (the literal `model="sonnet"` appears once — the reviewer pair in step A, line 45; the round-8 inventory pass reuses step A's dispatch without restating the literal).
 
 Run: `grep -c "Deliberate carve-out" skills/burndown-reviews/SKILL.md`
 Expected: `1`
@@ -418,10 +457,19 @@ git commit -m "feat: code-reviewer template gains workflow-escalation pointer (#
 
 - [ ] **Step 1: Add the pointer after the placeholder list**
 
-Insert after the `{DESCRIPTION}` placeholder bullet (line 41), before `**3. Act on feedback:**`:
+The line after the `{DESCRIPTION}` placeholder bullet (line 42) is blank and line 43 is the `**3. Act on feedback:**` heading. Make this an explicit replace so the Edit tool has an exact, unique match. Replace (the blank line immediately followed by the heading):
 
 ```markdown
+
+**3. Act on feedback:**
+```
+with (new paragraph, blank line, then the same heading):
+
+```markdown
+
 **Complex diffs:** this single-reviewer dispatch is a Family II leaf. For a high-blast-radius / large diff, or when a single reviewer returns low confidence, escalate it to a multi-model review Workflow instead — see spandapowers:escalating-to-workflows and the "Escalating a Complex Review" section of `code-reviewer.md`. Single-reviewer is the default.
+
+**3. Act on feedback:**
 ```
 
 - [ ] **Step 2: Verify**
@@ -443,15 +491,21 @@ git commit -m "feat: requesting-code-review points to workflow escalation (#2)"
 #4 reuses `code-reviewer.md` (edited in Task 7), so this is just a gate-and-pointer — no escalation logic duplicated.
 
 **Files:**
-- Modify: `skills/subagent-driven-development/code-quality-reviewer-prompt.md` (append after the closing checks, before the final "Code reviewer returns:" line or at end)
+- Modify: `skills/subagent-driven-development/code-quality-reviewer-prompt.md` (insert the escalation note immediately before the final "Code reviewer returns:" line)
 
-- [ ] **Step 1: Add the pointer note at the end of the file**
+- [ ] **Step 1: Insert the pointer note immediately before the return-contract line**
 
-Append to the end of `skills/subagent-driven-development/code-quality-reviewer-prompt.md`:
+The file's last line is the return-contract summary. Insert the escalation note immediately BEFORE it so that line stays last. Replace:
 
 ```markdown
+**Code reviewer returns:** Strengths, Issues (Critical/Important/Minor), Assessment
+```
+with:
 
+```markdown
 **Escalation:** this is a Family II review leaf that reuses `requesting-code-review/code-reviewer.md`, so it inherits that template's "Escalating a Complex Review" guidance automatically. Escalate to a multi-model review Workflow only on a high-blast-radius / large diff or a reviewer low-confidence signal — never on a `BLOCKED` return (reviewers don't emit one), and not by default. See spandapowers:escalating-to-workflows.
+
+**Code reviewer returns:** Strengths, Issues (Critical/Important/Minor), Assessment
 ```
 
 - [ ] **Step 2: Verify**
@@ -489,8 +543,8 @@ The final whole-implementation code review (dispatched once after all per-task l
 Run: `grep -c "Final Review Escalation" skills/subagent-driven-development/SKILL.md`
 Expected: `1`
 
-Run: `grep -c "escalating-to-workflows" skills/subagent-driven-development/SKILL.md`
-Expected: `≥4` (Tasks 2, 3 ×2, and this one).
+Run: `[ "$(grep -c "escalating-to-workflows" skills/subagent-driven-development/SKILL.md)" -ge 4 ] && echo OK || echo FAIL`
+Expected: `OK` (threshold only — grows as Tasks 2/3/10 land; do not hand-count exact provenance.)
 
 - [ ] **Step 3: Commit**
 
@@ -504,7 +558,7 @@ git commit -m "feat: SDD final reviewer escalation note (#3)"
 ### Task 11: SDD spec-compliance reviewer #5 (spec Part C #5)
 
 **Files:**
-- Modify: `skills/subagent-driven-development/spec-reviewer-prompt.md` (append after the closing code fence, line 61–62)
+- Modify: `skills/subagent-driven-development/spec-reviewer-prompt.md` (append after the closing fence at line 61 (append to EOF))
 
 - [ ] **Step 1: Add a pointer note after the template fence**
 
@@ -536,9 +590,13 @@ git commit -m "feat: SDD spec-compliance reviewer escalation note (#5)"
 
 - [ ] **Step 1: Add the #6 escalation note after step F's rules**
 
-Immediately after the step-F "On fatal abort, set `abort_error`..." line (current line 67), add a new indented note:
-
+Anchor on the unique fatal-abort line that ends step F. Replace:
 ```markdown
+On fatal abort, set `abort_error = fixer_result.error` and break out of the loop — round 8 still runs (the user gets the abort error alongside a current-state finding list).
+```
+with that same line followed by a newline and the new 3-space-indented sub-bullet (this inserts the sub-bullet after the fatal-abort line and before the `7. **(F-bis)...` line; no change to F-bis):
+```markdown
+On fatal abort, set `abort_error = fixer_result.error` and break out of the loop — round 8 still runs (the user gets the abort error alongside a current-state finding list).
    - **Complex-fix escalation (Family I):** the fixer is a Family I leaf — escalate it to a dynamic Workflow only when its retry oracle is exhausted (retry-once spent and the artifact/suite still wrong), and only for **substantive impl-stage fixes**. Mechanical typo/format findings stay single-agent (B5 anti-signal "large-but-mechanical / low-entropy"). On escalation: `research → apply → self-verify-against-findings` → emit the exact `deferred` / `created_paths` / `deleted_paths` / summary contract. Retry-once + crash-abort semantics are preserved. See spandapowers:escalating-to-workflows.
 ```
 
@@ -563,10 +621,15 @@ git commit -m "feat: burndown fixer leaf workflow escalation (#6)"
 
 - [ ] **Step 1: Add a per-leaf escalation note**
 
-In `skills/dispatching-parallel-agents/SKILL.md`, locate the `## Agent Prompt Structure` section and append this paragraph at its end (before the next `##` heading):
-
+Anchor on the unique `## Common Mistakes` heading (the section immediately after `## Agent Prompt Structure`). Replace:
+```markdown
+## Common Mistakes
+```
+with the new paragraph, a blank line, then that same heading:
 ```markdown
 **Escalating a stubborn domain (per-leaf, not the fan-out):** the parallel fan-out itself stays a composition node — leave it. But an *individual* per-domain fixer leaf is a Family I leaf that may be escalated to a dynamic Workflow when it can't find the root cause: single-agent first, and on can't-find-root-cause / repeated failures (the suite still failing after the single-agent fix attempt — this fixer has no dedicated retry counter, so it uses the "after the first failed self-test" default), re-dispatch the **same** domain as `systematic-debug → fix → verify`, emitting the same root-cause + changes summary. See spandapowers:escalating-to-workflows.
+
+## Common Mistakes
 ```
 
 - [ ] **Step 2: Verify**
@@ -601,7 +664,7 @@ grep -rniE "sonnet|cheaper model|least powerful|more capable model" \
   skills/escalating-to-workflows/ \
   agents/burndown-fixer.md agents/burndown-reviewer.md
 ```
-Expected: the ONLY `sonnet` matches are the deliberate review carve-outs — (a) the burndown reviewer pair in `burndown-reviews/SKILL.md` step A + round-8 inventory and `agents/burndown-reviewer.md`'s "Opus + Sonnet" framing, and (b) the `Opus + Sonnet` carve-out text in `code-reviewer.md` / SDD final-reviewer note. There must be **no** "cheaper model", "least powerful", or "more capable model" matches anywhere in this set, and **no** "use sonnet for fixer" / "overridable" matches. Eyeball each `sonnet` hit and confirm it is a carve-out; any other is a bug — fix it before continuing.
+Expected: the ONLY `sonnet` matches are the deliberate review carve-outs — (a) the burndown reviewer pair in `burndown-reviews/SKILL.md` step A + round-8 inventory and `agents/burndown-reviewer.md`'s "Opus + Sonnet" framing, and (b) the `Opus + Sonnet` carve-out text in `code-reviewer.md` / SDD final-reviewer note. `skills/escalating-to-workflows/SKILL.md` is expected to contribute zero `sonnet` matches (its content names no model). There must be **no** "cheaper model", "least powerful", or "more capable model" matches anywhere in this set, and **no** "use sonnet for fixer" / "overridable" matches. Eyeball each `sonnet` hit and confirm it is a carve-out; any other is a bug — fix it before continuing.
 
 - [ ] **Step 2: Confirm out-of-scope files were not touched**
 
@@ -619,7 +682,7 @@ Expected: `0` (reference skill is intentionally excluded from the curated user-f
 - [ ] **Step 4: Skill-triggering suite still passes for the edited user-facing skills**
 
 Run: `bash tests/skill-triggering/run-all.sh`
-Expected: the suite passes (the edits are additive pointers and do not change which naive prompts trigger `requesting-code-review`, `dispatching-parallel-agents`, `burndown-reviews`, etc.). If the harness requires network/API access and cannot run in this environment, note that explicitly and fall back to confirming the `SKILLS=()` array is unchanged: `git diff 9972e5e HEAD -- tests/skill-triggering/run-all.sh` → empty.
+Expected: the suite passes (the edits are additive pointers and do not change which naive prompts trigger `requesting-code-review`, `dispatching-parallel-agents`, `burndown-reviews`, etc.). If the harness requires network/API access and cannot run in this environment, note that explicitly and fall back to confirming the `SKILLS=()` array is unchanged: `git diff 9972e5e HEAD -- tests/skill-triggering/run-all.sh` → empty. The no-network fallback only confirms no accidental edit to the harness, NOT that skills still trigger; if the harness can't run, additionally do a manual check that a canonical naive prompt still triggers at least one edited user-facing skill (e.g. `requesting-code-review` or `burndown-reviews`) in a local session.
 
 - [ ] **Step 5: Burndown fixtures unaffected**
 

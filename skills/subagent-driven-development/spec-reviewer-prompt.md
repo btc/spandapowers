@@ -59,3 +59,5 @@ Task tool (general-purpose):
     - ✅ Spec compliant (if everything matches after code inspection)
     - ❌ Issues found: [list specifically what's missing or extra, with file:line references]
 ```
+
+**Escalation:** this is a Family II review leaf. For a high-blast-radius or hard spec, or when the reviewer returns low confidence, escalate to a Workflow: `research (re-read spec + code) → adversarial verify enumerating each requirement → emit the compliant/issues list` (the single-agent shape). Not a `BLOCKED` return; not by default. See spandapowers:escalating-to-workflows.

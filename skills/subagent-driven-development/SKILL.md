@@ -110,17 +110,17 @@ Implementer subagents report one of four statuses. Handle each appropriately:
 
 **DONE:** Proceed to spec compliance review.
 
-**DONE_WITH_CONCERNS:** The implementer completed the work but flagged doubts. Read the concerns before proceeding. If the concerns are about correctness or scope, address them before review. If they're observations (e.g., "this file is getting large"), note them and proceed to review.
+**DONE_WITH_CONCERNS:** The implementer completed the work but flagged doubts. Read the concerns before proceeding. If the concerns are about correctness or scope, address them before review. If they're observations (e.g., "this file is getting large"), note them and proceed to review. If the doubts are substantive — or the implementer signalled it couldn't decide among multiple viable approaches — that is an empirical escalation entry point for the #1 implementer leaf: re-dispatch the **same** task as a dynamic Workflow (see spandapowers:escalating-to-workflows). DONE_WITH_CONCERNS and can't-decide are additional empirical entry points wired here at the implementer leaf — distinct from the BLOCKED rung above; do not fold them into BLOCKED handling.
 
 **NEEDS_CONTEXT:** The implementer needs information that wasn't provided. Provide the missing context and re-dispatch.
 
 **BLOCKED:** The implementer cannot complete the task. Assess the blocker:
-1. If it's a context problem, provide more context and re-dispatch with the same model
-2. If the task requires more reasoning, re-dispatch with a more capable model
-3. If the task is too large, break it into smaller pieces
+1. If it's a context problem, provide more context and re-dispatch (still Opus)
+2. If the task requires more reasoning, escalate the **same leaf** to a dynamic Workflow — there is no more capable model than Opus, so the lever is multi-agent decomposition. See spandapowers:escalating-to-workflows.
+3. If the task is too large, break it into smaller pieces (a pipeline-shaped Workflow over the pieces is also an option — see spandapowers:escalating-to-workflows)
 4. If the plan itself is wrong, escalate to the human
 
-**Never** ignore an escalation or force the same model to retry without changes. If the implementer said it's stuck, something needs to change.
+**Never** ignore an escalation or force a retry without changes. If the implementer said it's stuck, something needs to change.
 
 ## Prompt Templates
 

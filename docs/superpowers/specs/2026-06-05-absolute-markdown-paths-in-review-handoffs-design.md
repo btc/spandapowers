@@ -1,7 +1,7 @@
 # Absolute markdown paths in review handoffs
 
 **Date:** 2026-06-05
-**Status:** Design approved, pending spec review
+**Status:** Design approved; in spec review (this is the spec currently under burndown review)
 
 ## Problem
 
@@ -27,9 +27,15 @@ Exactly the two user-facing review handoffs where a skill hands the user a
 markdown file to open and review:
 
 1. **`skills/brainstorming/SKILL.md`** — the spec review gate (the
-   `> "Spec written and committed to \`<path>\`…"` message, ~line 137).
+   `> "Spec written and committed to \`<path>\`…"` message, line 137).
 2. **`skills/writing-plans/SKILL.md`** — the execution handoff (the
-   `**"Plan complete and saved to \`…\`…"` message, ~line 148).
+   `**"Plan complete and saved to \`docs/superpowers/plans/<filename>.md\`. Two execution options:**`
+   message, line 148).
+
+The verbatim quoted handoff messages above are the authoritative locators for
+the edits. The cited line numbers (137, 148) are indicative only and may shift
+if the files change before the edit is applied; locate the edit by matching the
+quoted message text, not the line number.
 
 ### Explicit non-goals
 
@@ -69,20 +75,45 @@ Each of the two handoff messages is updated so that:
   `$(git rev-parse --show-toplevel)/docs/superpowers/specs/…`, so the user can
   open it directly.
 
+`git rev-parse --show-toplevel` returns the root of the *current worktree* —
+which is exactly where the spec/plan file physically lives — so the resulting
+absolute path points at the real on-disk file and is directly openable. This is
+precisely what resolves the relative-path ambiguity called out in the Problem
+section: a worktree's working directory is not the main checkout, so a
+repo-relative path is ambiguous, but a worktree-local *absolute* path is not.
+Worktree-local absolute is the intended, correct, openable target — no
+canonical/main-checkout resolution is wanted or performed.
+
+Note this is an instruction the agent *evaluates*, not a literal string to
+display: the agent runs `git rev-parse --show-toplevel`, takes its resolved
+output, and substitutes that literal absolute path into the user-facing handoff
+message. The displayed message must contain the fully-expanded path with **no
+unexpanded `$(...)`** left in it.
+
 ## Approach / changes
 
 ### 1. `skills/brainstorming/SKILL.md`
 
-Update the spec review-gate message (~line 137) so the reported path is
-absolute, and add a brief instruction that the agent reports the absolute path
-(repo root + relative path). The surrounding step text ("User Review Gate") is
-otherwise unchanged.
+Update the spec review-gate message (line 137) so the reported path is
+absolute. The placeholder inside the quoted handoff message becomes an absolute
+path. The absolute-path instruction is added as a short sentence placed
+immediately *after* the quoted handoff message block and *before* the existing
+"Wait for the user's response." instruction in the User Review Gate (telling the
+agent to report the absolute path: repo root + relative path). The surrounding
+step text ("User Review Gate") is otherwise unchanged.
 
 ### 2. `skills/writing-plans/SKILL.md`
 
-Update the Execution Handoff message (~line 148) so the reported plan path is
-absolute, with the same absolute-path instruction. The "Save plans to:" line at
-the top of the skill stays repo-relative (it is a save-to template, a non-goal).
+Update the Execution Handoff message (line 148) so the reported plan path is
+absolute, with the same absolute-path instruction. The path placeholder here
+lives inside a bolded inline-code span — the message reads
+`**"Plan complete and saved to \`docs/superpowers/plans/<filename>.md\`. Two execution options:**` —
+so the existing path token to replace is the backtick-wrapped inline-code span
+`` `docs/superpowers/plans/<filename>.md` ``, which becomes the absolute-path
+placeholder. The edit must make the path absolute *while preserving* the
+surrounding `**…**` emphasis and the backticks around the path. The "Save plans
+to:" line at the top of the skill stays repo-relative (it is a save-to
+template, a non-goal).
 
 ## Testing / verification
 

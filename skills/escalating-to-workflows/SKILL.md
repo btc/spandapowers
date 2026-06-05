@@ -21,9 +21,9 @@ Predicting complexity up front is unreliable. The preferred trigger is *empirica
 
 ## When to escalate — up-front (judgment guidance, subordinate to the empirical trigger)
 
-Skipping the single-agent attempt is permitted **only when at least two signals from the HARD subset below are present simultaneously before dispatch** (any two of the three suffice; no specific combination required). Otherwise use the empirical path.
+Skipping the single-agent attempt is permitted **only when the HARD gate below is met by at least two of its three signals present simultaneously** before dispatch (any two of the three HARD signals suffice; no specific combination required). Otherwise use the empirical path.
 
-The three-gate rule structures that judgment call. Escalate up-front only if **all three** pass:
+The three-gate rule structures that judgment call. Escalate up-front only if **all three gates** (ELIGIBLE, HARD, WORTH IT) pass:
 
 1. **ELIGIBLE** — self-contained, *no human gate inside it*, and a Workflow can be schema-constrained to return an artifact *shape-compatible* with the single-agent output.
 2. **HARD** — irreducible interacting-constraint complexity (e.g. ≥3 requirements that constrain each other) **OR** a wide consequential solution space **OR** an unknown-size discovery search — **AND** no cheap deterministic oracle (test/compile/typecheck) already proves correctness.

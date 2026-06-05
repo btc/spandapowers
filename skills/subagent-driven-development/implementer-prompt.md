@@ -68,6 +68,8 @@ Task tool (general-purpose):
 
     **How to escalate:** Report back with status BLOCKED or NEEDS_CONTEXT (or
     DONE_WITH_CONCERNS if you finished but couldn't decide among viable approaches).
+    Use BLOCKED if you are stuck *before finishing*; if you *finished* the work but
+    couldn't decide among multiple viable approaches, use DONE_WITH_CONCERNS instead.
     Describe specifically what you're stuck on, what you've tried, and what kind of
     help you need. The controller can provide more context, escalate this same task
     to a dynamic multi-agent Workflow, or break the task into smaller pieces.

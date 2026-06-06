@@ -27,6 +27,15 @@ You MUST create a task for each of these items and complete them in order:
 2. **Offer visual companion** (if topic will involve visual questions) — this is its own message, not combined with a clarifying question. See the Visual Companion section below.
 3. **Ask clarifying questions** — one at a time, understand purpose/constraints/success criteria
 4. **Propose 2-3 approaches** — with trade-offs and your recommendation
+
+   **Mid-brainstorm de-risk (high-risk/unknown only).** If the design hinges on
+   consequential unknowns that can't be resolved without deep investigation —
+   reading/running/verifying more than fits comfortably in this session's context,
+   and separable from the design dialogue — invoke
+   **REQUIRED SUB-SKILL:** Use spandapowers:delegating-research-spikes to delegate a
+   rigorous background spike, then fold its findings back here and continue. This is
+   an *interior* branch, not the terminal transition: after the spike, the
+   brainstorm still ends by invoking writing-plans (the invariant holds).
 5. **Present design** — in sections scaled to their complexity, get user approval after each section
 6. **Write design doc** — save to `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md` and commit
 7. **Spec self-review** — quick inline check for placeholders, contradictions, ambiguity, scope (see below)
@@ -46,6 +55,7 @@ digraph brainstorming {
     "Offer Visual Companion\n(own message, no other content)" [shape=box];
     "Ask clarifying questions" [shape=box];
     "Propose 2-3 approaches" [shape=box];
+    "Delegate research spike\n(if high-risk unknowns)" [shape=box];
     "Present design sections" [shape=box];
     "User approves design?" [shape=diamond];
     "Write design doc" [shape=box];
@@ -59,6 +69,8 @@ digraph brainstorming {
     "Visual questions ahead?" -> "Ask clarifying questions" [label="no"];
     "Offer Visual Companion\n(own message, no other content)" -> "Ask clarifying questions";
     "Ask clarifying questions" -> "Propose 2-3 approaches";
+    "Propose 2-3 approaches" -> "Delegate research spike\n(if high-risk unknowns)" [label="high-risk unknowns"];
+    "Delegate research spike\n(if high-risk unknowns)" -> "Propose 2-3 approaches" [label="fold findings back"];
     "Propose 2-3 approaches" -> "Present design sections";
     "Present design sections" -> "User approves design?";
     "User approves design?" -> "Present design sections" [label="no, revise"];

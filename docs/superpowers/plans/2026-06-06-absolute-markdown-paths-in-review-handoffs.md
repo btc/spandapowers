@@ -14,6 +14,8 @@
 
 **Verification note:** These edits modify the very skills governing the session, but skills are already loaded — the edits do not change in-flight behavior. Verification is by inspection/`grep`, not behavioral test.
 
+**Line-number caveat:** Any embedded line numbers in this plan (e.g. "line 137", "line 148", "line 119", "line 18") are indicative navigation hints only — they may drift as the files change. The authoritative locators are the verbatim old-text blocks quoted in each task's Step 2, which are matched exactly. If a line number disagrees with the file, trust the quoted block.
+
 ---
 
 ### Task 1: Absolute path in the `brainstorming` spec review gate
@@ -130,7 +132,7 @@ After saving the plan, offer execution choice. Report the plan path as a real ab
 - [ ] **Step 3: Verify the new text is present, formatting preserved, and the old placeholder is gone**
 
 ```bash
-grep -c 'Plan complete and saved to `<absolute-path>`. Two execution options:' skills/writing-plans/SKILL.md
+grep -cF '**"Plan complete and saved to `<absolute-path>`. Two execution options:' skills/writing-plans/SKILL.md
 grep -c 'git rev-parse --show-toplevel' skills/writing-plans/SKILL.md
 grep -c '`docs/superpowers/plans/<filename>.md`. Two execution options' skills/writing-plans/SKILL.md
 grep -c 'Save plans to:' skills/writing-plans/SKILL.md
@@ -163,8 +165,10 @@ git commit -m "feat(writing-plans): report absolute plan path in execution hando
 
 ```bash
 cd /Users/btc/src/spandapowers-abs-md-paths
-git diff --stat 6c63eaf..HEAD -- skills/
+git diff --stat HEAD~2..HEAD -- skills/
 ```
+
+**Precondition:** run this check ONLY after Tasks 1 and 2 are both committed. `HEAD~2` is the commit immediately before Task 1 — i.e. the diff spans exactly the two skill-edit commits made in Task 1 and Task 2 (Task 3 itself makes no commit before this check). If `git diff --stat HEAD~2..HEAD -- skills/` produces empty output, that means the Task 1/Task 2 commits have not landed yet — empty output is a FAILURE, not a pass.
 
 Expected: exactly two files listed — `skills/brainstorming/SKILL.md` and `skills/writing-plans/SKILL.md`. No other skills changed.
 
@@ -175,7 +179,7 @@ grep -rn '`<absolute-path>`' skills/brainstorming/SKILL.md skills/writing-plans/
 grep -c 'git rev-parse --show-toplevel' skills/brainstorming/SKILL.md skills/writing-plans/SKILL.md
 ```
 
-Expected: `<absolute-path>` appears in each handoff message; the `git rev-parse --show-toplevel` instruction count is `1` per file.
+Expected: `<absolute-path>` appears in each handoff message. The first grep returns **2 lines for `skills/brainstorming/SKILL.md`** — the handoff message line AND the inserted instruction sentence, which also contains `` `<absolute-path>` `` ("Report `<absolute-path>` as a real absolute path…") — and **1 line for `skills/writing-plans/SKILL.md`** (only the handoff message line; the writing-plans instruction sentence refers to "the plan's repo-relative path" and does not contain the `` `<absolute-path>` `` token). Do not be surprised by the extra brainstorming match. The `git rev-parse --show-toplevel` instruction count is `1` per file.
 
 - [ ] **Step 3: Confirm no save-to template regressed**
 
@@ -184,4 +188,4 @@ grep -n 'docs/superpowers/specs/YYYY-MM-DD' skills/brainstorming/SKILL.md
 grep -n 'docs/superpowers/plans/YYYY-MM-DD' skills/writing-plans/SKILL.md
 ```
 
-Expected: each save-to template line is still present and still repo-relative (non-goals preserved).
+Expected: the brainstorming `docs/superpowers/specs/YYYY-MM-DD` grep returns **2 lines** (line 31, the checklist "Write design doc" step, and line 119, under the "After the Design / Documentation" bullet — both reference the specs save-to template, both still repo-relative and unchanged). The writing-plans `docs/superpowers/plans/YYYY-MM-DD` grep returns **1 line** (line 18, "Save plans to:"). All save-to template lines are still present and still repo-relative (non-goals preserved).

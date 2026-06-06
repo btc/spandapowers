@@ -143,9 +143,9 @@ Otherwise: invoke the `burndown-reviews` skill with `stage=plan`, `artifact_path
 
 ## Execution Handoff
 
-After saving the plan, offer execution choice:
+After saving the plan, offer execution choice. Report the plan path as a real absolute path so the user can open it directly: take the plan's repo-relative path and prefix it with the repository root, evaluating `git rev-parse --show-toplevel` and inserting its resolved output (e.g. `/Users/you/src/project/docs/superpowers/plans/2026-01-01-feature.md`). The displayed message must contain the fully-expanded path — never an unexpanded `$(...)`.
 
-**"Plan complete and saved to `docs/superpowers/plans/<filename>.md`. Two execution options:**
+**"Plan complete and saved to `<absolute-path>`. Two execution options:**
 
 **1. Subagent-Driven (recommended)** - I dispatch a fresh subagent per task, review between tasks, fast iteration
 

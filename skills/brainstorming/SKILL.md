@@ -134,7 +134,9 @@ Fix any issues inline. No need to re-review — just fix and move on.
 **User Review Gate:**
 After the spec review loop passes, ask the user to review the written spec before proceeding:
 
-> "Spec written and committed to `<path>`. Please review it and let me know if you want to make any changes before we start writing out the implementation plan."
+> "Spec written and committed to `<absolute-path>`. Please review it and let me know if you want to make any changes before we start writing out the implementation plan."
+
+Report `<absolute-path>` as a real absolute path so the user can open it directly: take the spec's repo-relative path and prefix it with the repository root, evaluating `git rev-parse --show-toplevel` and inserting its resolved output (e.g. `/Users/you/src/project/docs/superpowers/specs/2026-01-01-topic-design.md`). The displayed message must contain the fully-expanded path — never an unexpanded `$(...)`.
 
 Wait for the user's response. If they request changes, make them and re-run the spec review loop. Only proceed once the user approves.
 

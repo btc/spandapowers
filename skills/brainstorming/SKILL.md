@@ -128,6 +128,11 @@ digraph brainstorming {
 
 **Documentation:**
 
+- Branch names: never write a concrete branch name into this document
+  unless its ref already exists. Claim it now (create the ref via the
+  environment's branch-naming convention, or `git branch <name>` — never
+  `-f`, never a checkout), or refer to "the work branch" without naming
+  it.
 - Write the validated design (spec) to `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`
   - (User preferences for spec location override this default)
 - Use elements-of-style:writing-clearly-and-concisely skill if available

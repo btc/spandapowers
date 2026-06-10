@@ -131,6 +131,8 @@ git checkout <base-branch>
 git branch -D <feature-branch>
 ```
 
+Deleting an abandoned claimed branch is safe and expected.
+
 Then: Cleanup worktree (Step 5)
 
 ### Step 5: Cleanup Worktree

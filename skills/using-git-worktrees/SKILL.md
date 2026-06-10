@@ -83,7 +83,28 @@ project=$(basename "$(git rev-parse --show-toplevel)")
 ### 2. Create Worktree
 
 ```bash
-# Determine full path
+# Claim the branch FIRST — the path below embeds the claimed name.
+# (`-b` was the unguarded second creation path; it is deliberately gone.)
+#
+# Skip-claim guard: skip the claim iff $BRANCH_NAME is already set AND
+#   git show-ref --verify --quiet "refs/heads/$BRANCH_NAME"
+# succeeds (caller passed an already-claimed name). If $BRANCH_NAME is
+# set but that check fails (stale/deleted ref), STOP and surface the
+# mismatch — caller-contract violation; do not claim or re-derive.
+# Remote-only refs (refs/remotes/...) never satisfy the guard: the claim
+# must produce a local ref, so `git worktree add` below never
+# DWIM-creates one.
+#
+# To claim: use the environment's branch-naming convention or claim tool
+# if one exists — pass $BRANCH_SHORTNAME as the requested shortname when
+# set, and pass the base as its start-point argument for stacked work.
+# Without one: git branch <name> [<start-point>] (never -f, never a
+# checkout). Either way, capture the resulting name, e.g.:
+#   BRANCH_NAME=$(claim-tool "$BRANCH_SHORTNAME")  # claim-tool = whatever the environment provides
+#   (or: git branch <name> [<start-point>]; BRANCH_NAME=<name>)
+# Nothing below runs until $BRANCH_NAME names an existing local ref.
+
+# Determine full path (runs AFTER the claim; embeds the claimed name)
 case $LOCATION in
   .worktrees|worktrees)
     path="$LOCATION/$BRANCH_NAME"
@@ -93,8 +114,9 @@ case $LOCATION in
     ;;
 esac
 
-# Create worktree with new branch
-git worktree add "$path" -b "$BRANCH_NAME"
+# Attach to the existing branch — no -b; this must fail rather than
+# invent a ref
+git worktree add "$path" "$BRANCH_NAME"
 cd "$path"
 ```
 
@@ -182,11 +204,12 @@ You: I'm using the using-git-worktrees skill to set up an isolated workspace.
 
 [Check .worktrees/ - exists]
 [Verify ignored - git check-ignore confirms .worktrees/ is ignored]
-[Create worktree: git worktree add .worktrees/auth -b feature/auth]
+[Claim branch: environment convention, shortname "auth" → prints BRANCH_NAME]
+[Create worktree: git worktree add .worktrees/$BRANCH_NAME "$BRANCH_NAME"]
 [Run npm install]
 [Run npm test - 47 passing]
 
-Worktree ready at /Users/jesse/myproject/.worktrees/auth
+Worktree ready at /Users/jesse/myproject/.worktrees/$BRANCH_NAME
 Tests passing (47 tests, 0 failures)
 Ready to implement auth feature
 ```
@@ -213,6 +236,18 @@ Ready to implement auth feature
 - **subagent-driven-development** - REQUIRED before executing any tasks
 - **executing-plans** - REQUIRED before executing any tasks
 - Any skill needing isolated workspace
+
+**Caller contract:** Callers (brainstorming, executing-plans,
+subagent-driven-development) never compose branch names. Both
+`$BRANCH_NAME` and `$BRANCH_SHORTNAME` are optional caller-set input
+variables; when neither is set, the claim sub-step derives a name from
+context. Pass either an already-claimed branch name in `$BRANCH_NAME`
+(set ONLY in that case — the skip-claim guard in the `### 2. Create
+Worktree` step then applies), or a shortname/task description in
+`$BRANCH_SHORTNAME` with `$BRANCH_NAME` left unset; the claim sub-step
+captures the created name into `$BRANCH_NAME`. Keeping the two disjoint
+prevents a shortname that coincidentally matches a stale local ref from
+silently skipping the claim.
 
 **Pairs with:**
 - **finishing-a-development-branch** - REQUIRED for cleanup after work complete

@@ -62,6 +62,11 @@ This structure informs the task decomposition. Each task should produce self-con
 ---
 ```
 
+**Branch names:** never write a concrete branch name into this document
+unless its ref already exists. Claim it now (create the ref via the
+environment's branch-naming convention, or `git branch <name>` — never
+`-f`, never a checkout), or refer to "the work branch" without naming it.
+
 ## Task Structure
 
 ````markdown

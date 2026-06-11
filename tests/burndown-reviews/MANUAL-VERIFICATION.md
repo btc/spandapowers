@@ -11,7 +11,7 @@ Fixtures live under `tests/burndown-reviews/fixtures/`.
 1. Copy `fixtures/flawed-spec.md` to a scratch location: `cp fixtures/flawed-spec.md /tmp/flawed.md`.
 2. Create a minimal context file: `echo "Test fixture for manual verification." > /tmp/flawed.context.md`.
 3. Invoke a fresh Claude session with superpowers loaded.
-4. Prompt: `Run the burndown-reviews skill on /tmp/flawed.md, with stage=spec, predecessor=/tmp/flawed.context.md, fixer_model=opus.`
+4. Prompt: `Run the burndown-reviews skill on /tmp/flawed.md, with stage=spec, predecessor=/tmp/flawed.context.md, fixer_model=fable.`
 
 Expected behavior:
 - Round 1 finds H or M findings (architectural contradiction, vague motivation, duplicated components, etc.).
@@ -39,7 +39,7 @@ Create `/tmp/escalation-test-spec.md` with a deliberate orchestrator-vs-reviewer
 - A section that is locked-in per the context file (e.g., `/tmp/escalation-test.context.md` says "DECISION: use a single-table schema, denormalize aggressively") but the spec body invites the reviewer to flag it as a concern (e.g., "Architecture: single-table schema with deliberate denormalization — this is a known design trade-off chosen for read latency").
 
 Run the burndown procedure as in Procedure 1. Expected behavior:
-- A reviewer (likely Sonnet, since Opus tends to respect locked decisions more aggressively) will probably flag the denormalization as an anti-pattern.
+- A reviewer will probably flag the denormalization as an anti-pattern.
 - The orchestrator should recognize the context file's lock-in, **override** the finding confidently (no escalation), and continue.
 
 If the orchestrator escalates this to the user instead, that's a regression: the orchestrator-confidence rule isn't being applied. If the orchestrator silently applies the reviewer's fix (rewriting the schema), that's also a regression: the locked decision wasn't preserved.

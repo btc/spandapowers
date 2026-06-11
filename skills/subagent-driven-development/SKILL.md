@@ -100,7 +100,7 @@ digraph process {
 
 ## Model Selection
 
-All SDD subagents run **Opus** — the implementer, the spec-compliance reviewer, the code-quality reviewer, and the final reviewer. There is no cheaper/faster tier and no per-task model selection.
+All SDD subagents run **Fable** — the implementer, the spec-compliance reviewer, the code-quality reviewer, and the final reviewer. There is no cheaper/faster tier and no per-task model selection.
 
 When a leaf is genuinely complex, the lever is not a bigger model (there isn't one) — it is escalating that leaf to a dynamic Workflow. See spandapowers:escalating-to-workflows.
 
@@ -115,8 +115,8 @@ Implementer subagents report one of four statuses. Handle each appropriately:
 **NEEDS_CONTEXT:** The implementer needs information that wasn't provided. Provide the missing context and re-dispatch.
 
 **BLOCKED:** The implementer cannot complete the task. Assess the blocker:
-1. If it's a context problem, provide more context and re-dispatch (still Opus)
-2. If the task requires more reasoning, escalate the **same leaf** to a dynamic Workflow — there is no more capable model than Opus, so the lever is multi-agent decomposition. See spandapowers:escalating-to-workflows.
+1. If it's a context problem, provide more context and re-dispatch (still Fable)
+2. If the task requires more reasoning, escalate the **same leaf** to a dynamic Workflow — there is no more capable model than Fable, so the lever is multi-agent decomposition. See spandapowers:escalating-to-workflows.
 3. If the task is too large, break it into smaller pieces (a pipeline-shaped Workflow over the pieces is also an option — see spandapowers:escalating-to-workflows)
 4. If the plan itself is wrong, escalate to the human
 
@@ -269,7 +269,7 @@ Done!
 
 ## Final Review Escalation
 
-The final whole-implementation code review (dispatched once after all per-task loops) is the highest-blast-radius review point in SDD. It is a Family II review leaf: escalate it to a dynamic Workflow on a large whole-branch diff (orchestrator complexity judgment) or a reviewer low-confidence / can't-reconcile signal — not a `BLOCKED` return, and not by default. On escalation: a multi-model panel (**Opus + Sonnet** — review-diversity carve-out) plus a loop-until-dry enumeration sweep over the whole-branch diff → judge → one consolidated Strengths / Issues / Assessment report (the single-agent shape). See spandapowers:escalating-to-workflows.
+The final whole-implementation code review (dispatched once after all per-task loops) is the highest-blast-radius review point in SDD. It is a Family II review leaf: escalate it to a dynamic Workflow on a large whole-branch diff (orchestrator complexity judgment) or a reviewer low-confidence / can't-reconcile signal — not a `BLOCKED` return, and not by default. On escalation: a multi-model panel (**Fable + Opus** — review-diversity carve-out) plus a loop-until-dry enumeration sweep over the whole-branch diff → judge → one consolidated Strengths / Issues / Assessment report (the single-agent shape). See spandapowers:escalating-to-workflows.
 
 ## Burndown Review Pass
 
@@ -281,7 +281,7 @@ Otherwise: collect the list of files touched during this SDD run via `git diff -
 
 **If `diff_paths` is empty** (no files changed since `diff_base`): the impl run produced no work. Skip the burndown-reviews invocation entirely and proceed directly to `finishing-a-development-branch` with a brief note to the user that nothing was changed.
 
-Otherwise invoke the `burndown-reviews` skill with `stage=impl`, `artifact_path=<repo root>`, `predecessor={ plan_path, diff_base, diff_paths }`, `fixer_model=opus`. Wait for the loop to terminate. The trajectory report is shown to the user as part of its return.
+Otherwise invoke the `burndown-reviews` skill with `stage=impl`, `artifact_path=<repo root>`, `predecessor={ plan_path, diff_base, diff_paths }`, `fixer_model=fable`. Wait for the loop to terminate. The trajectory report is shown to the user as part of its return.
 
 ## Integration
 

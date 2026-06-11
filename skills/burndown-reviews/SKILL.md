@@ -1,6 +1,6 @@
 ---
 name: burndown-reviews
-description: "Multi-model subagent review loop run at superpowers checkpoints. Dispatched by brainstorming, writing-plans, and subagent-driven-development BEFORE their user-review gate. Drives Opus + Sonnet reviewers concurrently, applies findings round-by-round via a fixer subagent, escalates only when the orchestrator disagrees with a reviewer."
+description: "Multi-model subagent review loop run at superpowers checkpoints. Dispatched by brainstorming, writing-plans, and subagent-driven-development BEFORE their user-review gate. Drives Fable + Opus reviewers concurrently, applies findings round-by-round via a fixer subagent, escalates only when the orchestrator disagrees with a reviewer."
 ---
 
 # Burndown Reviews
@@ -18,12 +18,14 @@ Run a bounded multi-model subagent review loop on an artifact (spec, plan, or wo
   - `spec` stage: path to `<artifact_basename>.context.md`
   - `plan` stage: path to the spec
   - `impl` stage: object `{ plan_path, diff_base, diff_paths }` populated by SDD
-- `fixer_model` — always `opus` for all stages. Retained as a fixed symbolic constant for call-site traceability and minimal diff; **not** a tunable parameter — no code path may set it to anything other than `opus`.
+- `fixer_model` — always `fable` for all stages. Retained as a fixed symbolic constant for call-site traceability and minimal diff; **not** a tunable parameter — no code path may set it to anything other than `fable`.
 - `stage` — `spec` | `plan` | `impl`
 
 ## Spec
 
 Authoritative behavior is defined in `docs/superpowers/specs/2026-05-04-burndown-reviews-design.md`. This skill file is the operational checklist; consult the spec for the why and the edge cases.
+
+Model names in the 2026-05-04 spec predate the 2026-06-10 Fable swap (see `docs/superpowers/specs/2026-06-10-fable-model-swap-design.md`); this skill file is authoritative for model selection (reviewer pair, fixer model, and any model-override behavior), including where the spec's pseudocode and dispatch table say otherwise.
 
 ## Loop execution
 
@@ -34,14 +36,17 @@ deferred_findings = []
 prev_deferred_id_set = None
 prev_artifact_hash = None
 abort_error = None
-fixer_model_for_stage = opus   # fixed for all stages; not tunable
+fixer_model_for_stage = fable   # fixed for all stages; not tunable
 ```
 
 For each round 1 through 7:
 
 The loop steps below are labeled to match the spec pseudocode's letters (A through F-bis), with the same operations and ordering.
 
-1. **(A) Dispatch reviewers concurrently** — issue both Task calls in a single message with the `burndown-reviewer` agent, one with `model="opus"`, one with `model="sonnet"` (these exact strings — the Task tool's `model` parameter overrides the agent's `model: inherit` frontmatter). Pass `stage`, `artifact_path`, and the predecessor context. Both run in parallel. The orchestrator stamps the returned findings post-hoc as `opus-r{round}-{n}` / `sonnet-r{round}-{n}` and concatenates them with the prior round's `deferred_findings` (which retain their older IDs) into `all_findings`. (**Deliberate carve-out — do not "consistency-fix":** the `opus`+`sonnet` pairing is intentional cross-*model* review diversity, the entire reason the pair exists. This is the only *always-on* reviewer-pair Sonnet usage and it stays (the #2/#3 escalated review panels are a separate, gated carve-out).)
+1. **(A) Dispatch reviewers concurrently** — issue both Task calls in a single message with the `burndown-reviewer` agent, one with `model="fable"`, one with `model="opus"` (these exact strings — the Task tool's `model` parameter overrides the agent's `model: inherit` frontmatter). Pass `stage`, `artifact_path`, and the predecessor context. Both run in parallel. The orchestrator stamps the returned findings post-hoc as `fable-r{round}-{n}` / `opus-r{round}-{n}` and concatenates them with the prior round's `deferred_findings` (which retain their older IDs) into `all_findings`. (**Deliberate carve-out — do not "consistency-fix":** the `fable`+`opus` pairing is intentional cross-*model* review diversity, the entire reason the pair exists. This is the only *always-on* reviewer-pair Opus usage and it stays (the #2/#3 escalated review panels are a separate, gated carve-out).)
+
+   The `fable` model slug requires Claude Code ≥ 2.1.170 (verified floor); builds without `fable` support fail loudly at dispatch validation.
+
 2. **(B) Judge each finding** — for each entry in `all_findings`, choose one of three verdicts:
    - **Accept** — finding is real and the suggested fix is sound. Add to `fix_list`.
    - **Override** (confident) — you can verify the reviewer is wrong against the spec, the artifact, or the locked decisions. Drop silently; do not escalate. The user's time is the scarce resource you are protecting. **An Override verdict on a deferred finding retires its ID** (per spec § "Override of a previously-deferred finding") — it does not appear in subsequent rounds.
@@ -56,7 +61,7 @@ The loop steps below are labeled to match the spec pseudocode's letters (A throu
    - **Conflicting fixes at same location in fix_list:** the orchestrator must NEVER pass two contradictory `suggested_fix` strings to the fixer. Pick one and override or escalate the other; or, if the fixes are genuinely complementary, author a synthesized fix instruction in your own words and **log it in the round summary** so the rewrite is auditable. Prefer pick-one over rewriting.
 4. **(D) Pause if any escalated disagreements remain** — surface disagreements to the user in plain language, batched per round. Use the Disagreement UX from the spec (state finding, explain disagreement, offer recommendation, listen, restate). Block until the user finishes resolving every escalated item. Add user-resolved "keep" findings to `fix_list` (with the user's text replacing the reviewer's `suggested_fix` if they wrote one).
 5. **(E) Early-clean check** — if `fix_list` is empty, return "clean" and emit the trajectory report. (User-skipped escalations and orchestrator overrides both count as cleared.)
-6. **(F) Dispatch the fixer subagent** — single Task call with the `burndown-fixer` agent and `model=fixer_model_for_stage` (always `opus`). Pass `artifact_path`, the reconciled `fix_list`, and `stage` (plus `diff_paths` and `diff_base` for impl). Verify content changed via sha256 hash before/after, with these legitimacy rules:
+6. **(F) Dispatch the fixer subagent** — single Task call with the `burndown-fixer` agent and `model=fixer_model_for_stage` (always `fable`). Pass `artifact_path`, the reconciled `fix_list`, and `stage` (plus `diff_paths` and `diff_base` for impl). Verify content changed via sha256 hash before/after, with these legitimacy rules:
    - **Hash domain:** for prose artifacts (spec, plan), hash the artifact file's full bytes. For impl stage, hash the concatenated full contents of files in `diff_paths` (sorted by path), treating any deleted file's contents as empty bytes — so deletions register as a real content change rather than a hash collision.
    - **Unchanged content + non-empty deferred list = legitimate.** The fixer determined it could apply none of the findings cleanly. Do NOT retry; advance to round N+1 with the deferred list carried forward.
    - **Unchanged content + empty deferred list + non-empty fix_list = failure.** Retry once. If still unchanged, set `abort_error` and break (fatal abort).
@@ -71,8 +76,8 @@ The loop steps below are labeled to match the spec pseudocode's letters (A throu
 
 After the loop (round 8 — inventory pass):
 
-- Dispatch both reviewers concurrently with the same inputs as in step A. Stamp findings with the **actual round number** the loop terminated at: typically `opus-r8-{n}` / `sonnet-r8-{n}` for the initial inventory; `opus-r{N}-{n}` / `sonnet-r{N}-{n}` for a post-extension inventory (e.g., `r18` after 10 extension rounds concluding at round 18). Do NOT hardcode `r8` for post-extension inventory passes.
-- Merge `final_opus + final_sonnet + deferred_findings` using the in-loop merge rules. Carried-deferred entries keep older IDs. **The `[deferred since r{N}]` annotation is added at the residual-emission step (immediately before user surface), based on the merged entry's surviving ID** — if a deferred ID survived the merge, annotate; otherwise don't.
+- Dispatch both reviewers concurrently with the same inputs as in step A. Stamp findings with the **actual round number** the loop terminated at: typically `fable-r8-{n}` / `opus-r8-{n}` for the initial inventory; `fable-r{N}-{n}` / `opus-r{N}-{n}` for a post-extension inventory (e.g., `r18` after 10 extension rounds concluding at round 18). Do NOT hardcode `r8` for post-extension inventory passes.
+- Merge `final_fable + final_opus + deferred_findings` using the in-loop merge rules. Carried-deferred entries keep older IDs. **The `[deferred since r{N}]` annotation is added at the residual-emission step (immediately before user surface), based on the merged entry's surviving ID** — if a deferred ID survived the merge, annotate; otherwise don't.
 - Termination logic — three cases:
   - `residual` empty AND `abort_error` is None → return "clean".
   - `abort_error` is not None (regardless of residual size) → surface the abort error AND the residual list together; mark as hard_escalate-with-abort.

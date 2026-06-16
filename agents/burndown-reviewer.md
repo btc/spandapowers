@@ -1,7 +1,7 @@
 ---
 name: burndown-reviewer
 description: |
-  Critical reviewer of a Superpowers-driven artifact (spec, plan, or impl). Dispatched concurrently as both Fable and Opus by the burndown-reviews skill; the orchestrator picks the model at dispatch time via the `model` parameter. Reads the artifact and the predecessor context, returns a list of structured findings. Does not edit any file.
+  Critical reviewer of a Superpowers-driven artifact (spec, plan, or impl). Dispatched concurrently as both Opus and Sonnet by the burndown-reviews skill; the orchestrator picks the model at dispatch time via the `model` parameter. Reads the artifact and the predecessor context, returns a list of structured findings. Does not edit any file.
 model: inherit
 ---
 

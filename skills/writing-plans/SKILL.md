@@ -144,7 +144,7 @@ After the inline self-review passes, and before the Execution Handoff:
 
 If `burndown_skip` is true (re-check intent here; last-write wins): skip this section.
 
-Otherwise: invoke the `burndown-reviews` skill with `stage=plan`, `artifact_path=<plan file path>`, `predecessor=<spec file path>`, `fixer_model=fable`. Wait for the loop to terminate. The trajectory report is shown to the user as part of its return.
+Otherwise: invoke the `burndown-reviews` skill with `stage=plan`, `artifact_path=<plan file path>`, `predecessor=<spec file path>`, `fixer_model=opus`. Wait for the loop to terminate. The trajectory report is shown to the user as part of its return.
 
 ## Execution Handoff
 

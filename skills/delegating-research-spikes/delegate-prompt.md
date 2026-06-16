@@ -24,7 +24,7 @@ else.
 
 ## Your runtime
 
-- **You run on model `fable`.**
+- **You run on model `opus`.**
 - **Dynamic-Workflow authoring is opted in for hard leaves**, per
   `escalating-to-workflows`. This dispatch instruction *is* the opt-in (that
   skill's skill-instruction opt-in model); if skill-instruction opt-in is no

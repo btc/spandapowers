@@ -42,7 +42,7 @@ You MUST create a task for each of these items and complete them in order:
 8. **Burndown review pass (NEW)** — if `burndown_skip` is true (re-check intent here; last-write wins), skip this step. Otherwise:
    1. Write `<artifact_basename>.context.md` alongside the spec containing a best-effort summary of the user's original request, locked-in design decisions, and explicit non-goals (sections may be empty if not produced during the brainstorm).
    2. Confirm the file was actually created before invoking burndown-reviews: `[ -f <artifact_basename>.context.md ]`. If the file is missing, write a minimal placeholder ("(no context captured)") rather than passing a non-existent path to burndown-reviews — a missing predecessor file would silently fail at reviewer dispatch.
-   3. Invoke the `burndown-reviews` skill with `stage=spec`, `artifact_path=<spec path>`, `predecessor=<context file path>`, `fixer_model=opus`. Wait for the loop to terminate. The loop's trajectory report goes to the user as part of its return.
+   3. Invoke the `burndown-reviews` skill with `stage=spec`, `artifact_path=<spec path>`, `predecessor=<context file path>`, `fixer_model=fable`. Wait for the loop to terminate. The loop's trajectory report goes to the user as part of its return.
 9. **User reviews written spec** — ask user to review the spec file before proceeding
 10. **Transition to implementation** — invoke writing-plans skill to create implementation plan
 

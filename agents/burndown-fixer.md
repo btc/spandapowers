@@ -1,7 +1,7 @@
 ---
 name: burndown-fixer
 description: |
-  Applies a reconciled finding list to a Superpowers-driven artifact. Dispatched by the burndown-reviews skill; the orchestrator dispatches it with Opus for all stages (the fixer model is always Opus and is not tunable).
+  Applies a reconciled finding list to a Superpowers-driven artifact. Dispatched by the burndown-reviews skill; the orchestrator dispatches it with Fable for all stages (the fixer model is always Fable and is not tunable).
 model: inherit
 ---
 

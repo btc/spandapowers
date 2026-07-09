@@ -51,7 +51,7 @@ The host stays interactive with the user throughout. In order:
    dedicated worktree on a **non-default branch** (never main/master, so the
    delegate's per-task commits never land on main/master — SDD red-flags impl on
    main/master and the delegate has no user to consent). Dispatch the delegate on
-   model **opus** using `delegate-prompt.md`, doing two distinct things:
+   model **fable** using `delegate-prompt.md`, doing two distinct things:
    **(a) PREPEND** the full `background-delegate-profile.md` contents above the
    prompt; **(b) FILL** the four `{...}` placeholders with concrete values —
    `{spike_spec_path}` (the burned-down spike spec), `{spike_context_path}` (the

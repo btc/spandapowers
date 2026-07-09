@@ -1,6 +1,6 @@
 {
   "name": "spandapowers",
-  "version": "5.0.8-btc.1",
+  "version": "5.0.8-btc.2",
   "type": "module",
   "main": ".opencode/plugins/superpowers.js"
 }
